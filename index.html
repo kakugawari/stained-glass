@@ -1,0 +1,1086 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>ステンドグラス</title>
+<!-- ===== PWA設定 ===== -->
+<link rel="manifest" href="./manifest.json">
+<meta name="theme-color" content="#14110e">
+<link rel="icon" type="image/png" sizes="192x192" href="./icon-192.png">
+<!-- iOS: ホーム画面追加用 -->
+<link rel="apple-touch-icon" href="./apple-touch-icon.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="ステンドグラス">
+<style>
+  /* ===== 全体:大正の洋館の薄暗がり ===== */
+  html, body {
+    margin: 0; padding: 0;
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: #14110e;
+    touch-action: none;
+    -webkit-user-select: none; user-select: none;
+    font-family: "Hiragino Mincho ProN", "Yu Mincho", "YuMincho", serif;
+  }
+  canvas { display: block; }
+
+  /* ===== 題:英語タイトル(上部中央に常時) ===== */
+  #title {
+    position: fixed; top: 16px; left: 50%;
+    transform: translateX(-50%);
+    color: rgba(215,200,170,0.8);
+    font-size: 15px; letter-spacing: 0.42em;
+    pointer-events: none;
+    text-shadow: 0 0 12px rgba(215,190,140,0.25);
+    white-space: nowrap;
+  }
+
+  /* ===== 枠の名前(タイトルの下にふわっと出る) ===== */
+  #frame-name {
+    position: fixed; top: 44px; left: 50%;
+    transform: translateX(-50%);
+    color: rgba(215,200,170,0.85);
+    font-size: 13px; letter-spacing: 0.3em;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.8s ease;
+    text-shadow: 0 0 10px rgba(215,190,140,0.3);
+  }
+  #frame-name.show { opacity: 1; }
+
+  /* ===== のこり枚数(右上に控えめに) ===== */
+  #remain {
+    position: fixed; top: 18px; right: 16px;
+    color: rgba(215,200,170,0.5);
+    font-size: 12px; letter-spacing: 0.2em;
+    pointer-events: none;
+    transition: opacity 0.6s ease;
+  }
+  #remain.hidden { opacity: 0; }
+
+  /* ===== 下部の操作帯(2段:上=色、下=ボタン) ===== */
+  #bar {
+    position: fixed; bottom: 0; left: 0; right: 0;
+    display: flex; flex-direction: column; align-items: center;
+    gap: 9px;
+    padding: 10px 8px calc(10px + env(safe-area-inset-bottom));
+    background: linear-gradient(to top, rgba(10,8,6,0.88), rgba(10,8,6,0));
+  }
+  #swatches {
+    display: flex; gap: 7px; justify-content: center; flex-wrap: nowrap;
+  }
+  .swatch {
+    width: 24px; height: 24px; border-radius: 50%;
+    border: 1px solid rgba(255,255,255,0.18);
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+    flex-shrink: 0;
+  }
+  .swatch.active {
+    transform: scale(1.22);
+    box-shadow: 0 0 9px 2px rgba(255,255,255,0.3);
+    border-color: rgba(255,255,255,0.75);
+  }
+  #buttons { display: flex; gap: 8px; }
+  .btn {
+    color: rgba(215,200,170,0.85);
+    background: none; border: 1px solid rgba(215,200,170,0.3);
+    border-radius: 4px;
+    font-family: inherit; font-size: 12px; letter-spacing: 0.08em;
+    padding: 6px 10px;
+    cursor: pointer;
+  }
+  .btn:active { background: rgba(215,200,170,0.12); }
+  .btn.active {
+    color: #ffe9b8;
+    border-color: rgba(255,225,160,0.7);
+    box-shadow: 0 0 8px rgba(255,220,150,0.2);
+  }
+</style>
+</head>
+<body>
+
+<canvas id="cv"></canvas>
+<div id="title">Light the Glass</div>
+<div id="frame-name"></div>
+<div id="remain" class="hidden"></div>
+
+<div id="bar">
+  <div id="swatches"></div>
+  <div id="buttons">
+    <button class="btn" id="btn-easy">easy</button>
+    <button class="btn" id="btn-normal">normal</button>
+    <button class="btn" id="btn-hard">hard</button>
+    <button class="btn" id="btn-vhard">very hard</button>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* ============================================================
+   ステンドグラス(塗り絵方式・難易度制)
+   - easy / normal / hard / very hard の4段階
+   - 押すたびに窓の外形(縦長・尖塔・円蓋・四角・丸窓)が
+     ランダムに選ばれ、左右対称のランダム分割で枠が生まれる
+   - easy〜hard では時々、手作りの幾何学枠10種が混ざって出る
+   - セルをタップすると選択中の色のガラスが嵌まり、
+     全て埋まると教会の鐘が鳴って光が差し込む
+   ============================================================ */
+
+const cv  = document.getElementById("cv");
+const ctx = cv.getContext("2d");
+
+/* 嵌めたガラスを焼き込むレイヤー(変化があった時だけ描き直す) */
+const glassCv  = document.createElement("canvas");
+const glassCtx = glassCv.getContext("2d");
+
+let W = 0, H = 0, DPR = 1;
+let PX = 0, PY = 0, PW = 0, PH = 0;   /* パネルの位置と大きさ */
+let panelRatio = 0.62;                /* 現在の外形の幅/高さ */
+
+function layoutPanel() {
+  PH = H * 0.62;
+  PW = PH * panelRatio;
+  if (PW > W * 0.86) { PW = W * 0.86; PH = PW / panelRatio; }
+  PX = (W - PW) / 2;
+  PY = (H - PH) / 2 - H * 0.03;
+}
+
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  cv.width  = W * DPR; cv.height  = H * DPR;
+  cv.style.width = W + "px"; cv.style.height = H + "px";
+  glassCv.width = W * DPR; glassCv.height = H * DPR;
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  glassCtx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  layoutPanel();
+  redrawGlass();
+}
+window.addEventListener("resize", resize);
+
+/* 単位座標(0〜1)→画面座標 */
+const ux = u => PX + u * PW;
+const vy = v => PY + v * PH;
+
+/* ============================================================
+   色:宝石の10系統
+   ============================================================ */
+const COLOR_FAMILIES = [
+  { name: "紅",   shades: ["#c1123a", "#e33d5a", "#8f0f2e", "#ff6b7a"] },
+  { name: "橙",   shades: ["#e06520", "#ff8a3d", "#b54a12", "#ffa763"] },
+  { name: "金",   shades: ["#e6a417", "#ffc94d", "#b47a0c", "#ffe08a"] },
+  { name: "若草", shades: ["#7ab648", "#9ed46a", "#5a8f2e", "#c0e896"] },
+  { name: "翠",   shades: ["#0f9d58", "#28c76f", "#0a6e3d", "#66e0a3"] },
+  { name: "浅葱", shades: ["#158fa8", "#3ab8cf", "#0d6a80", "#7dd8e8"] },
+  { name: "瑠璃", shades: ["#1440c8", "#2a6cf0", "#0d2a8f", "#5aa0ff"] },
+  { name: "菫",   shades: ["#6a3fb5", "#8f63d6", "#4a2585", "#b394e8"] },
+  { name: "桃",   shades: ["#d4548a", "#ee7fae", "#a83866", "#ffa8cc"] },
+  { name: "乳白", shades: ["#cfd9e8", "#e8eef5", "#b8c6d8", "#dfe4ec"] },
+];
+let familyIdx = 6;   /* 初期は瑠璃 */
+
+const swatchesEl = document.getElementById("swatches");
+COLOR_FAMILIES.forEach((fam, i) => {
+  const el = document.createElement("div");
+  el.className = "swatch" + (i === familyIdx ? " active" : "");
+  el.title = fam.name;
+  el.style.background =
+    `radial-gradient(circle at 35% 35%, ${fam.shades[3]}, ${fam.shades[2]} 72%)`;
+  el.addEventListener("click", () => {
+    familyIdx = i;
+    for (const c of swatchesEl.children) c.classList.remove("active");
+    el.classList.add("active");
+  });
+  swatchesEl.appendChild(el);
+});
+
+function pickShade() {
+  const s = COLOR_FAMILIES[familyIdx].shades;
+  return s[(Math.random() * s.length) | 0];
+}
+
+/* ============================================================
+   幾何ユーティリティ
+   ============================================================ */
+function rectCell(u0, v0, u1, v1) {
+  return [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
+}
+
+/* 長方形を「菱形+四隅の三角」の5枚に割る(大正ガラスの定番) */
+function diamondSplit(u0, v0, u1, v1) {
+  const mu = (u0 + u1) / 2, mv = (v0 + v1) / 2;
+  return [
+    [[mu, v0], [u1, mv], [mu, v1], [u0, mv]],
+    [[u0, v0], [mu, v0], [u0, mv]],
+    [[mu, v0], [u1, v0], [u1, mv]],
+    [[u1, mv], [u1, v1], [mu, v1]],
+    [[u0, mv], [mu, v1], [u0, v1]],
+  ];
+}
+
+function gridCells(cols, rows, u0 = 0, v0 = 0, u1 = 1, v1 = 1) {
+  const cells = [];
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      cells.push(rectCell(
+        u0 + (u1 - u0) * i / cols,       v0 + (v1 - v0) * j / rows,
+        u0 + (u1 - u0) * (i + 1) / cols, v0 + (v1 - v0) * (j + 1) / rows
+      ));
+    }
+  }
+  return cells;
+}
+
+function polyArea(pts) {
+  let a = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i], q = pts[(i + 1) % pts.length];
+    a += p[0] * q[1] - q[0] * p[1];
+  }
+  return a / 2;   /* 符号つき */
+}
+
+/* ポリゴンを凸多角形で切り抜く(Sutherland-Hodgman法)。
+   窓の外形(すべて凸)でセルを切るのに使う */
+function clipConvex(subject, clip) {
+  const sign = polyArea(clip) > 0 ? 1 : -1;
+  let out = subject;
+  for (let e = 0; e < clip.length; e++) {
+    const a = clip[e], b = clip[(e + 1) % clip.length];
+    const ex = b[0] - a[0], ey = b[1] - a[1];
+    const inside = p => sign * (ex * (p[1] - a[1]) - ey * (p[0] - a[0])) >= -1e-9;
+    const inp = out; out = [];
+    for (let i = 0; i < inp.length; i++) {
+      const p = inp[i], q = inp[(i + 1) % inp.length];
+      const pin = inside(p), qin = inside(q);
+      if (pin) out.push(p);
+      if (pin !== qin) {
+        /* 辺 p-q と切断線 a-b の交点 */
+        const dx = q[0] - p[0], dy = q[1] - p[1];
+        const denom = ex * dy - ey * dx;
+        if (Math.abs(denom) > 1e-12) {
+          const t = (ex * (a[1] - p[1]) - ey * (a[0] - p[0])) / denom;
+          out.push([p[0] + dx * t, p[1] + dy * t]);
+        }
+      }
+    }
+    if (out.length === 0) return null;
+  }
+  return Math.abs(polyArea(out)) < 0.0008 ? null : out;
+}
+
+const UNIT_RECT = [[0, 0], [1, 0], [1, 1], [0, 1]];
+const clipToUnit = poly => clipConvex(poly, UNIT_RECT);
+
+/* ============================================================
+   窓の外形 5種(単位座標のポリゴン。縦横比は外形ごとに違う)
+   ============================================================ */
+const WINDOW_SHAPES = [
+  { key: "rect", name: "Tall Window", ratio: 0.62,
+    poly() { return UNIT_RECT; } },
+
+  { key: "square", name: "Square Window", ratio: 1.0,
+    poly() { return UNIT_RECT; } },
+
+  { key: "round", name: "Arched Window", ratio: 0.60,
+    poly() {
+      /* 上が半円のロマネスク窓。画面上で真円弧になるよう縦横比で補正 */
+      const r = this.ratio;
+      const a = 0.5 * r;               /* 半円の付け根の高さ */
+      const pts = [[0, 1], [0, a]];
+      for (let i = 0; i <= 16; i++) {
+        const th = Math.PI - Math.PI * i / 16;
+        pts.push([0.5 + 0.5 * Math.cos(th), a - 0.5 * r * Math.sin(th)]);
+      }
+      pts.push([1, 1]);
+      return pts;
+    } },
+
+  { key: "gothic", name: "Gothic Window", ratio: 0.58,
+    poly() {
+      /* 上が尖るゴシック窓。左右の大きな弧が頂点で出会う */
+      const r = this.ratio;
+      const s = Math.sqrt(3) / 2 * r;  /* 弧の付け根の高さ(等辺アーチ) */
+      const pts = [[0, 1], [0, s]];
+      /* 左の弧:中心(1, s)、半径=幅ぶん */
+      for (let i = 1; i <= 10; i++) {
+        const th = Math.PI + (Math.PI / 3) * i / 10;
+        pts.push([1 + Math.cos(th), s + Math.sin(th) * r]);
+      }
+      /* 右の弧:左の鏡映を逆順で */
+      for (let i = 10; i >= 1; i--) {
+        const th = Math.PI + (Math.PI / 3) * i / 10;
+        pts.push([-Math.cos(th), s + Math.sin(th) * r]);
+      }
+      pts.push([1, s], [1, 1]);
+      return pts;
+    } },
+
+  { key: "circle", name: "Rose Window", ratio: 1.0,
+    poly() {
+      const pts = [];
+      for (let i = 0; i < 28; i++) {
+        const th = Math.PI * 2 * i / 28;
+        pts.push([0.5 + 0.5 * Math.cos(th), 0.5 + 0.5 * Math.sin(th)]);
+      }
+      return pts;
+    } },
+];
+
+/* ============================================================
+   手作りの幾何学枠 10種(外形は縦長で固定)
+   ============================================================ */
+const HANDMADE = [
+
+  { name: "Checker", build() {
+      return gridCells(4, 7);
+    } },
+
+  { name: "Grand Diamond", build() {
+      const b = 0.13, cells = [];
+      cells.push(rectCell(0, 0, b, b), rectCell(1 - b, 0, 1, b),
+                 rectCell(0, 1 - b, b, 1), rectCell(1 - b, 1 - b, 1, 1));
+      cells.push(rectCell(b, 0, 0.5, b), rectCell(0.5, 0, 1 - b, b));
+      cells.push(rectCell(b, 1 - b, 0.5, 1), rectCell(0.5, 1 - b, 1 - b, 1));
+      cells.push(rectCell(0, b, b, 0.5), rectCell(0, 0.5, b, 1 - b));
+      cells.push(rectCell(1 - b, b, 1, 0.5), rectCell(1 - b, 0.5, 1, 1 - b));
+      cells.push(...diamondSplit(b, b, 1 - b, 1 - b));
+      return cells;
+    } },
+
+  { name: "Three Diamonds", build() {
+      const s = 0.16, cells = [];
+      for (let j = 0; j < 3; j++) {
+        cells.push(...diamondSplit(s, j / 3, 1 - s, (j + 1) / 3));
+      }
+      for (let j = 0; j < 4; j++) {
+        cells.push(rectCell(0, j / 4, s, (j + 1) / 4));
+        cells.push(rectCell(1 - s, j / 4, 1, (j + 1) / 4));
+      }
+      return cells;
+    } },
+
+  { name: "Sunburst", build() {
+      const cells = [];
+      const ox = 0.5, oy = 1.0;
+      const N = 6;
+      const bands = [0, 0.5, 0.95, 2.2];
+      const AR = 0.62;
+      const pt = (a, r) => [ox + Math.cos(a) * r, oy + Math.sin(a) * r * AR];
+      for (let k = 0; k < N; k++) {
+        const a0 = Math.PI + Math.PI * k / N;
+        const a1 = Math.PI + Math.PI * (k + 1) / N;
+        for (let bi = 0; bi < bands.length - 1; bi++) {
+          const r0 = bands[bi], r1 = bands[bi + 1];
+          const poly = [];
+          for (let i = 0; i <= 3; i++) poly.push(pt(a0 + (a1 - a0) * i / 3, r1));
+          if (r0 === 0) poly.push([ox, oy]);
+          else for (let i = 3; i >= 0; i--) poly.push(pt(a0 + (a1 - a0) * i / 3, r0));
+          const clipped = clipToUnit(poly);
+          if (clipped) cells.push(clipped);
+        }
+      }
+      return cells;
+    } },
+
+  { name: "Columns", build() {
+      const cols = 5, cells = [];
+      for (let i = 0; i < cols; i++) {
+        const cuts = i % 2 === 0 ? [0, 0.3, 0.7, 1] : [0, 0.5, 1];
+        for (let j = 0; j < cuts.length - 1; j++) {
+          cells.push(rectCell(i / cols, cuts[j], (i + 1) / cols, cuts[j + 1]));
+        }
+      }
+      return cells;
+    } },
+
+  { name: "Brickwork", build() {
+      const rows = 7, cols = 3, cells = [];
+      for (let j = 0; j < rows; j++) {
+        const off = (j % 2) * 0.5 / cols;
+        if (off > 0) cells.push(rectCell(0, j / rows, off, (j + 1) / rows));
+        for (let i = 0; i < cols; i++) {
+          const u0 = off + i / cols;
+          if (u0 >= 1) break;
+          cells.push(rectCell(u0, j / rows, Math.min(u0 + 1 / cols, 1), (j + 1) / rows));
+        }
+      }
+      return cells;
+    } },
+
+  { name: "Door Panel", build() {
+      const b = 0.15, cells = [];
+      cells.push(rectCell(0, 0, b, b), rectCell(1 - b, 0, 1, b),
+                 rectCell(0, 1 - b, b, 1), rectCell(1 - b, 1 - b, 1, 1));
+      cells.push(rectCell(b, 0, 1 - b, b), rectCell(b, 1 - b, 1 - b, 1));
+      cells.push(rectCell(0, b, b, 1 - b), rectCell(1 - b, b, 1, 1 - b));
+      cells.push(rectCell(b, b, 0.5, 0.45), rectCell(0.5, b, 1 - b, 0.45));
+      cells.push(...diamondSplit(b, 0.45, 1 - b, 1 - b));
+      return cells;
+    } },
+
+  { name: "Diamond Lattice", build() {
+      const cols = 3, rows = 5, cells = [];
+      const du = 1 / cols, dv = 1 / rows;
+      for (let j = 0; j <= rows; j++) {
+        for (let i = 0; i <= cols; i++) {
+          if ((i + j) % 2 !== 0) continue;
+          const cx = i * du, cy = j * dv;
+          const poly = [[cx, cy - dv], [cx + du, cy], [cx, cy + dv], [cx - du, cy]];
+          const clipped = clipToUnit(poly);
+          if (clipped) cells.push(clipped);
+        }
+      }
+      return cells;
+    } },
+
+  { name: "Wheel Window", build() {
+      /* 四辺に接する楕円+車輪状の割り+四隅 */
+      const cells = [];
+      const cx = 0.5, cy = 0.5;
+      const pt = (a, f) => [cx + Math.cos(a) * 0.5 * f, cy + Math.sin(a) * 0.5 * f];
+      const SEC = 8, RIN = [0, 0.55, 1];
+      for (let k = 0; k < SEC; k++) {
+        const a0 = Math.PI * 2 * k / SEC + Math.PI / SEC;
+        const a1 = Math.PI * 2 * (k + 1) / SEC + Math.PI / SEC;
+        for (let bi = 0; bi < RIN.length - 1; bi++) {
+          const f0 = RIN[bi], f1 = RIN[bi + 1];
+          const poly = [];
+          for (let i = 0; i <= 3; i++) poly.push(pt(a0 + (a1 - a0) * i / 3, f1));
+          if (f0 === 0) poly.push([cx, cy]);
+          else for (let i = 3; i >= 0; i--) poly.push(pt(a0 + (a1 - a0) * i / 3, f0));
+          cells.push(poly);
+        }
+      }
+      const corners = [
+        { c: [0, 0], aFrom: Math.PI * 1.5, aTo: Math.PI },
+        { c: [1, 0], aFrom: Math.PI * 2,   aTo: Math.PI * 1.5 },
+        { c: [1, 1], aFrom: Math.PI * 0.5, aTo: 0 },
+        { c: [0, 1], aFrom: Math.PI,       aTo: Math.PI * 0.5 },
+      ];
+      for (const co of corners) {
+        const poly = [co.c];
+        for (let i = 0; i <= 6; i++) {
+          poly.push(pt(co.aFrom + (co.aTo - co.aFrom) * i / 6, 1));
+        }
+        cells.push(poly);
+      }
+      return cells;
+    } },
+
+  { name: "Chevron", build() {
+      const bands = 4, cols = 6, cells = [];
+      for (let j = 0; j < bands; j++) {
+        const vt = j / bands, vb = (j + 1) / bands;
+        const y0 = j % 2 === 0 ? vb : vt;
+        const y1 = j % 2 === 0 ? vt : vb;
+        const pts = [];
+        for (let i = 0; i <= cols; i++) {
+          pts.push([i / cols, i % 2 === 0 ? y0 : y1]);
+        }
+        for (let i = 0; i < pts.length - 2; i++) {
+          cells.push([pts[i], pts[i + 1], pts[i + 2]]);
+        }
+        cells.push([[0, y0], [0, y1], pts[1]]);
+        cells.push([[1, pts[cols][1]], [1, pts[cols][1] === y0 ? y1 : y0], pts[cols - 1]]);
+      }
+      return cells;
+    } },
+];
+
+/* 難易度ごとに、混ざって出てくる手作り枠(セル数で振り分け)。
+   hard以上は目標枚数が多いためランダム生成のみ */
+const HANDMADE_BY_DIFF = {
+  easy:   ["Columns", "Door Panel", "Grand Diamond"],
+  normal: ["Three Diamonds", "Sunburst", "Diamond Lattice", "Wheel Window", "Checker", "Brickwork", "Chevron"],
+  hard:   [],
+  vhard:  [],
+};
+
+/* ============================================================
+   ランダム枠:目標枚数まで、いちばん大きい区画から割っていく
+   ・symmetric=true  … 左半分だけ作って鏡写し(建具らしい端正さ)
+   ・symmetric=false … 全面を直接分割(自由で崩れた表情)
+   ============================================================ */
+/* 難易度ごとの目標セル数と、指で押せるセルの最小サイズ(px)。
+   細かい難易度ほど下限も攻める */
+const DIFF_TARGET = { easy: 10, normal: 40, hard: 80, vhard: 140 };
+const DIFF_MIN_PX = { easy: 26, normal: 26, hard: 22, vhard: 19 };
+
+function randomFrame(diffKey, ratio, symmetric) {
+  const domainW = symmetric ? 0.5 : 1;                        /* 分割する領域の幅 */
+  const target = DIFF_TARGET[diffKey] * (symmetric ? 0.5 : 1); /* この領域での目標 */
+
+  /* 絶対最小サイズを単位座標に換算。どの難易度でも、
+     これより小さいセルは生まれない(押しやすさ優先で目標より減ることはある) */
+  const MIN_PX = DIFF_MIN_PX[diffKey];
+  const minU = MIN_PX / PW;
+  const minV = MIN_PX / PH;
+  const avgArea = domainW / target;   /* 平均セル面積(菱形の大きさ制限用) */
+
+  const done = [];                       /* 確定したセル(菱形割りの断片など) */
+  const regions = [[0, 0, domainW, 1]];  /* まだ割れる余地のある区画 */
+  const total = () => done.length + regions.length;
+
+  while (total() < target) {
+    /* いちばん大きい区画から割る(順位に揺らぎを入れて機械的になりすぎないように) */
+    let bi = -1, best = -1;
+    for (let i = 0; i < regions.length; i++) {
+      const r = regions[i];
+      const w = r[2] - r[0], h = r[3] - r[1];
+      if (w < minU * 2 && h < minV * 2) continue;   /* これ以上割れない */
+      const score = w * h * (0.7 + Math.random() * 0.6);
+      if (score > best) { best = score; bi = i; }
+    }
+    if (bi < 0) break;   /* 全区画が最小サイズ:ここで打ち止め */
+
+    const [u0, v0, u1, v1] = regions.splice(bi, 1)[0];
+    const w = u1 - u0, h = v1 - v0;
+
+    /* 菱形割り:平均セルの8倍以下の適度な区画に時々。
+       (巨大な区画に発動すると生成がそこで尽きてしまうため大きさを制限) */
+    if (w / 2 >= minU && h / 2 >= minV && w * h <= avgArea * 8 &&
+        total() + 5 <= target + 2 && Math.random() < 0.22) {
+      done.push(...diamondSplit(u0, v0, u1, v1));
+      continue;
+    }
+
+    /* 二分割:画面上の縦横比が整う向きに、最小サイズを守る位置で */
+    const canV = w >= minU * 2, canH = h >= minV * 2;
+    let vert = w * ratio > h ? true : (h > w * ratio * 1.5 ? false : Math.random() < 0.5);
+    if (vert && !canV) vert = false;
+    if (!vert && !canH) vert = true;
+    if (vert) {
+      const lo = Math.max(0.3, minU / w), hi = Math.min(0.7, 1 - minU / w);
+      const mu = u0 + w * (lo + Math.random() * (hi - lo));
+      regions.push([u0, v0, mu, v1], [mu, v0, u1, v1]);
+    } else {
+      const lo = Math.max(0.3, minV / h), hi = Math.min(0.7, 1 - minV / h);
+      const mv = v0 + h * (lo + Math.random() * (hi - lo));
+      regions.push([u0, v0, u1, mv], [u0, mv, u1, v1]);
+    }
+  }
+
+  /* 残った区画をセル化(押せる大きさなら時々、斜め割りで彩る) */
+  const half = [...done];
+  for (const [u0, v0, u1, v1] of regions) {
+    const w = u1 - u0, h = v1 - v0;
+    if (w >= minU * 1.4 && h >= minV * 1.4 && Math.random() < 0.12) {
+      half.push([[u0, v0], [u1, v0], [u1, v1]]);
+      half.push([[u0, v0], [u1, v1], [u0, v1]]);
+    } else {
+      half.push(rectCell(u0, v0, u1, v1));
+    }
+  }
+
+  /* 非対称モードは全面を直接分割済みなので、そのまま返す */
+  if (!symmetric) return half;
+
+  /* 鏡写し(u → 1-u)。頂点順を逆にして向きを保つ */
+  const cells = [...half];
+  for (const poly of half) {
+    cells.push(poly.map(p => [1 - p[0], p[1]]).reverse());
+  }
+  return cells;
+}
+
+/* ============================================================
+   枠の状態と読み込み
+   ============================================================ */
+let cells = [];
+let fills = [];
+let completed = false;
+let completeGlow = 0;
+let shapePoly = WINDOW_SHAPES[0].poly.call(WINDOW_SHAPES[0]);   /* 現在の外形 */
+
+const frameNameEl = document.getElementById("frame-name");
+const remainEl = document.getElementById("remain");
+let nameTimer = null;
+
+function showFrameName(name) {
+  frameNameEl.textContent = "─ " + name + " ─";
+  frameNameEl.classList.add("show");
+  clearTimeout(nameTimer);
+  nameTimer = setTimeout(() => frameNameEl.classList.remove("show"), 2400);
+}
+
+function updateRemain() {
+  const n = fills.filter(f => f === null).length;
+  if (n === 0) {
+    remainEl.classList.add("hidden");
+  } else {
+    remainEl.textContent = n + " left";
+    remainEl.classList.remove("hidden");
+  }
+}
+
+/* 難易度を選んで新しい窓を用意する */
+function newWindow(diffKey) {
+  /* ボタンの点灯 */
+  for (const [k, id] of Object.entries(DIFF_BTN)) {
+    document.getElementById(id).classList.toggle("active", k === diffKey);
+  }
+
+  const pool = HANDMADE_BY_DIFF[diffKey];
+  if (pool.length > 0 && Math.random() < 0.35) {
+    /* 手作り枠(外形は縦長) */
+    const name = pool[(Math.random() * pool.length) | 0];
+    const hm = HANDMADE.find(f => f.name === name);
+    panelRatio = 0.62;
+    shapePoly = UNIT_RECT;
+    layoutPanel();
+    cells = hm.build();
+    showFrameName(hm.name);
+  } else {
+    /* ランダム枠:外形を抽選して左右対称生成、外形で切り抜く */
+    const shape = WINDOW_SHAPES[(Math.random() * WINDOW_SHAPES.length) | 0];
+    panelRatio = shape.ratio;
+    shapePoly = shape.poly();
+    layoutPanel();
+    const raw = randomFrame(diffKey, shape.ratio, Math.random() < 0.5);   /* 対称/非対称は半々 */
+    cells = [];
+    for (const poly of raw) {
+      const clipped = shape.key === "rect" || shape.key === "square"
+        ? poly : clipConvex(poly, shapePoly);
+      if (clipped) cells.push(clipped);
+    }
+    showFrameName(shape.name);
+  }
+
+  fills = new Array(cells.length).fill(null);
+  completed = false;
+  completeGlow = 0;
+  glints.length = 0;
+  updateRemain();
+  redrawGlass();
+}
+
+const DIFF_BTN = {
+  easy: "btn-easy", normal: "btn-normal", hard: "btn-hard", vhard: "btn-vhard",
+};
+for (const [k, id] of Object.entries(DIFF_BTN)) {
+  document.getElementById(id).addEventListener("click", () => newWindow(k));
+}
+
+/* ============================================================
+   描画:セルをオフスクリーンに焼き込む(変化時のみ)
+   ============================================================ */
+function cellPath(c, poly) {
+  c.beginPath();
+  c.moveTo(ux(poly[0][0]), vy(poly[0][1]));
+  for (let i = 1; i < poly.length; i++) c.lineTo(ux(poly[i][0]), vy(poly[i][1]));
+  c.closePath();
+}
+
+/* 外形をコンテキストのパスとして描く(クリップ・木枠用) */
+function shapePath(c) {
+  c.moveTo(ux(shapePoly[0][0]), vy(shapePoly[0][1]));
+  for (let i = 1; i < shapePoly.length; i++) {
+    c.lineTo(ux(shapePoly[i][0]), vy(shapePoly[i][1]));
+  }
+  c.closePath();
+}
+
+function redrawGlass() {
+  glassCtx.clearRect(0, 0, W, H);
+  for (let i = 0; i < cells.length; i++) {
+    const poly = cells[i];
+    cellPath(glassCtx, poly);
+    if (fills[i]) {
+      glassCtx.fillStyle = fills[i];
+      glassCtx.globalAlpha = 0.92;
+      glassCtx.fill();
+      let cx = 0, cy = 0;
+      for (const p of poly) { cx += ux(p[0]); cy += vy(p[1]); }
+      cx /= poly.length; cy /= poly.length;
+      const rad = Math.max(8, Math.hypot(ux(poly[0][0]) - cx, vy(poly[0][1]) - cy));
+      const g = glassCtx.createRadialGradient(cx, cy, 0, cx, cy, rad);
+      g.addColorStop(0, "rgba(255,255,255,0.26)");
+      g.addColorStop(1, "rgba(255,255,255,0)");
+      glassCtx.fillStyle = g;
+      glassCtx.fill();
+      glassCtx.globalAlpha = 1;
+      glassCtx.strokeStyle = "#17130f";
+      glassCtx.lineWidth = 3;
+      glassCtx.lineJoin = "round";
+      glassCtx.stroke();
+    } else {
+      glassCtx.fillStyle = "rgba(13,19,32,0.9)";
+      glassCtx.globalAlpha = 1;
+      glassCtx.fill();
+      glassCtx.strokeStyle = "rgba(215,200,170,0.28)";
+      glassCtx.lineWidth = 1.2;
+      glassCtx.lineJoin = "round";
+      glassCtx.stroke();
+    }
+  }
+}
+
+/* ============================================================
+   音:Web Audio APIで教会の鐘を合成
+   ============================================================ */
+let audio = null;
+function ensureAudio() {
+  if (audio) { if (audio.state === "suspended") audio.resume(); return; }
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (AC) audio = new AC();
+}
+
+function bellStrike(base, when, vol) {
+  if (!audio) return;
+  const partials = [
+    { f: 0.50, g: 0.55, d: 6.0 },   /* ハム(唸りの土台) */
+    { f: 1.00, g: 1.00, d: 4.5 },   /* プライム */
+    { f: 1.19, g: 0.55, d: 3.2 },   /* ティアス(短三度:鐘特有の哀愁) */
+    { f: 1.50, g: 0.35, d: 2.6 },   /* クイント */
+    { f: 2.00, g: 0.50, d: 2.2 },   /* ノミナル */
+    { f: 2.66, g: 0.18, d: 1.2 },
+    { f: 3.98, g: 0.10, d: 0.8 },
+  ];
+  for (const p of partials) {
+    const osc = audio.createOscillator();
+    const gain = audio.createGain();
+    osc.type = "sine";
+    osc.frequency.value = base * p.f * (1 + (Math.random() - 0.5) * 0.004);
+    gain.gain.setValueAtTime(0.0001, when);
+    gain.gain.exponentialRampToValueAtTime(p.g * vol, when + 0.012);
+    gain.gain.exponentialRampToValueAtTime(0.0001, when + p.d);
+    osc.connect(gain).connect(audio.destination);
+    osc.start(when);
+    osc.stop(when + p.d + 0.1);
+  }
+}
+
+function pealBells() {
+  ensureAudio();
+  if (!audio) return;
+  const t0 = audio.currentTime + 0.05;
+  const bells = [
+    { base: 174.6, interval: 2.1, offset: 0.0, vol: 0.22 },
+    { base: 220.0, interval: 1.7, offset: 0.7, vol: 0.17 },
+    { base: 261.6, interval: 1.4, offset: 1.3, vol: 0.13 },
+  ];
+  for (const b of bells) {
+    for (let t = b.offset; t < 8.5; t += b.interval) {
+      bellStrike(b.base, t0 + t + Math.random() * 0.12, b.vol);
+    }
+  }
+}
+
+/* ============================================================
+   タップ音:ワイングラスを爪で軽く弾いたような澄んだ「チン」
+   ------------------------------------------------------------
+   ・グラスの振動モード(基音の約2.3倍・4.2倍の非整数倍音)を
+     サイン波で重ねると、あの硝子特有の透明な響きになる
+   ・基音をペンタトニックの高音域から選ぶので、連打しても
+     風鈴のように音楽的で耳障りになりにくい
+   ・ごく近い音程の2本をわずかにうならせて、余韻に艶を出す
+   ============================================================ */
+const TING_NOTES = [1568.0, 1760.0, 2093.0, 2349.3, 2637.0];  /* G6 A6 C7 D7 E7 */
+
+function glassTing() {
+  if (!audio) return;
+  const t = audio.currentTime;
+  const base = TING_NOTES[(Math.random() * TING_NOTES.length) | 0];
+  const vol = 0.055 + Math.random() * 0.02;   /* 音量もわずかに揺らす */
+
+  /* 硝子の振動モード:比率・強さ・余韻の長さ */
+  const modes = [
+    { f: 1.000, g: 1.00, d: 0.75 },   /* 基音(いちばん長く残る) */
+    { f: 1.004, g: 0.60, d: 0.65 },   /* ごく近い音とのうなり=艶 */
+    { f: 2.32,  g: 0.22, d: 0.32 },   /* 第2モード */
+    { f: 4.20,  g: 0.07, d: 0.14 },   /* 第3モード(弾いた瞬間の光沢) */
+  ];
+  for (const m of modes) {
+    const osc = audio.createOscillator();
+    const gain = audio.createGain();
+    osc.type = "sine";
+    osc.frequency.value = base * m.f;
+    gain.gain.setValueAtTime(0.0001, t);
+    gain.gain.exponentialRampToValueAtTime(m.g * vol, t + 0.004);  /* 爪で弾く立ち上がり */
+    gain.gain.exponentialRampToValueAtTime(0.0001, t + m.d);
+    osc.connect(gain).connect(audio.destination);
+    osc.start(t);
+    osc.stop(t + m.d + 0.05);
+  }
+}
+
+/* ============================================================
+   入力:セルをタップして色を灯す。はらうと光の帯
+   ============================================================ */
+const pointer = { down: false };
+
+const trail = [];
+const FLICK_SPEED = 2200;
+function pushTrail(x, y) {
+  const t = performance.now();
+  trail.push({ x, y, t });
+  while (trail.length > 0 && t - trail[0].t > 100) trail.shift();
+}
+let lightSweep = null;
+
+function pointInPoly(u, v, poly) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const [xi, yi] = poly[i], [xj, yj] = poly[j];
+    if ((yi > v) !== (yj > v) &&
+        u < (xj - xi) * (v - yi) / (yj - yi) + xi) {
+      inside = !inside;
+    }
+  }
+  return inside;
+}
+
+function tapCell(x, y) {
+  const u = (x - PX) / PW, v = (y - PY) / PH;
+  if (u < 0 || u > 1 || v < 0 || v > 1) return;
+  for (let i = 0; i < cells.length; i++) {
+    if (pointInPoly(u, v, cells[i])) {
+      /* 未記入なら嵌める。既に有れば必ず違う色味に差し替える */
+      let c;
+      do { c = pickShade(); } while (c === fills[i]);
+      fills[i] = c;
+      redrawGlass();
+      glassTing();
+      glints.push({ idx: i, t: 0, dur: 0.5 });
+      updateRemain();
+      if (!completed && fills.every(f => f !== null)) {
+        completed = true;
+        pealBells();
+      }
+      return;
+    }
+  }
+}
+
+cv.addEventListener("pointerdown", e => {
+  e.preventDefault();
+  ensureAudio();
+  pointer.down = true;
+  trail.length = 0;
+  pushTrail(e.clientX, e.clientY);
+  tapCell(e.clientX, e.clientY);
+});
+cv.addEventListener("pointermove", e => {
+  e.preventDefault();
+  if (!pointer.down) return;
+  pushTrail(e.clientX, e.clientY);
+});
+function onUp() {
+  if (!pointer.down) return;
+  pointer.down = false;
+  if (trail.length >= 2) {
+    const a = trail[0], b = trail[trail.length - 1];
+    const dtms = b.t - a.t;
+    if (dtms > 15) {
+      const vx = (b.x - a.x) / dtms * 1000;
+      const vy2 = (b.y - a.y) / dtms * 1000;
+      const sp = Math.hypot(vx, vy2);
+      if (sp >= FLICK_SPEED) lightSweep = { t: 0, dx: vx / sp, dy: vy2 / sp };
+    }
+  }
+  trail.length = 0;
+}
+window.addEventListener("pointerup", onUp);
+window.addEventListener("pointercancel", onUp);
+
+/* ============================================================
+   きらめき
+   ============================================================ */
+const glints = [];
+const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+let glintTimer = 0;
+
+function updateGlints(dt) {
+  glintTimer -= dt;
+  if (glintTimer <= 0 && !reduceMotion) {
+    const filledIdx = [];
+    for (let i = 0; i < fills.length; i++) if (fills[i]) filledIdx.push(i);
+    if (filledIdx.length > 0) {
+      glintTimer = 0.5 + Math.random() * 0.6;
+      glints.push({
+        idx: filledIdx[(Math.random() * filledIdx.length) | 0],
+        t: 0, dur: 0.9,
+      });
+    } else {
+      glintTimer = 0.5;
+    }
+  }
+  for (let i = glints.length - 1; i >= 0; i--) {
+    glints[i].t += dt;
+    if (glints[i].t > glints[i].dur) glints.splice(i, 1);
+  }
+}
+
+/* ============================================================
+   背景・木枠・光
+   ============================================================ */
+function drawBackground() {
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, "#221d17");
+  g.addColorStop(0.55, "#181410");
+  g.addColorStop(1, "#0e0b08");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, W, H);
+
+  if (completeGlow > 0) {
+    const gg = ctx.createRadialGradient(W / 2, PY + PH / 2, 0, W / 2, PY + PH / 2, Math.max(W, H));
+    gg.addColorStop(0, `rgba(255,235,190,${0.10 * completeGlow})`);
+    gg.addColorStop(1, "rgba(255,235,190,0)");
+    ctx.fillStyle = gg;
+    ctx.fillRect(0, 0, W, H);
+  }
+}
+
+function drawWoodFrame() {
+  /* 外形に沿った木枠:外形パスを太い線で縁取る */
+  const b = Math.max(9, PW * 0.05);
+  ctx.save();
+  ctx.beginPath();
+  shapePath(ctx);
+  const wg = ctx.createLinearGradient(PX, PY, PX + PW, PY + PH);
+  wg.addColorStop(0, "#4a3626");
+  wg.addColorStop(0.5, "#33251a");
+  wg.addColorStop(1, "#241a12");
+  ctx.strokeStyle = wg;
+  ctx.lineWidth = b * 2;
+  ctx.lineJoin = "round";
+  ctx.stroke();
+  /* 内側の細い縁と、外側のわずかなハイライト */
+  ctx.strokeStyle = "#15100b";
+  ctx.lineWidth = 2.5;
+  ctx.stroke();
+  ctx.strokeStyle = "rgba(255,220,170,0.10)";
+  ctx.lineWidth = b * 2 + 2;
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawCompleteRays(time) {
+  if (completeGlow <= 0.01) return;
+  const cx = W / 2, cy = PY + PH * 0.4;
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  /* 窓の外側だけに光が漏れる(外形を除外してクリップ) */
+  ctx.beginPath();
+  ctx.rect(0, 0, W, H);
+  shapePath(ctx);
+  ctx.clip("evenodd");
+  const N = 7;
+  for (let i = 0; i < N; i++) {
+    const a = Math.PI * 0.5 + (i - (N - 1) / 2) * 0.16 + Math.sin(time * 0.3 + i) * 0.02;
+    const len = Math.max(W, H) * 1.2;
+    const x2 = cx + Math.cos(a) * len, y2 = cy + Math.sin(a) * len;
+    const lg = ctx.createLinearGradient(cx, cy, x2, y2);
+    lg.addColorStop(0, `rgba(255,240,200,${0.06 * completeGlow})`);
+    lg.addColorStop(1, "rgba(255,240,200,0)");
+    ctx.strokeStyle = lg;
+    ctx.lineWidth = PW * (0.10 + (i % 3) * 0.05);
+    ctx.beginPath();
+    ctx.moveTo(cx, cy);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/* ============================================================
+   メインループ
+   ============================================================ */
+let lastT = performance.now();
+
+function frame(now) {
+  const dt = Math.min((now - lastT) / 1000, 0.05);
+  lastT = now;
+  const time = now / 1000;
+
+  updateGlints(dt);
+  if (completed && completeGlow < 1) completeGlow = Math.min(completeGlow + dt * 0.4, 1);
+
+  drawBackground();
+
+  /* 硝子本体+呼吸する裏光 */
+  ctx.drawImage(glassCv, 0, 0, W, H);
+  const breathe = (reduceMotion ? 0.10 : 0.10 + 0.07 * Math.sin(time * 0.9))
+                + completeGlow * 0.15;
+  ctx.save();
+  ctx.globalCompositeOperation = "lighter";
+  ctx.globalAlpha = Math.max(0, breathe);
+  ctx.drawImage(glassCv, 0, 0, W, H);
+  ctx.restore();
+
+  /* きらめき */
+  if (glints.length > 0) {
+    ctx.save();
+    ctx.globalCompositeOperation = "lighter";
+    for (const g of glints) {
+      if (!cells[g.idx] || !fills[g.idx]) continue;
+      const a = Math.sin(g.t / g.dur * Math.PI);
+      ctx.globalAlpha = a * 0.35;
+      cellPath(ctx, cells[g.idx]);
+      ctx.fillStyle = "#fff5dc";
+      ctx.fill();
+    }
+    ctx.restore();
+  }
+
+  /* はらいの光の帯(窓の中だけを照らす) */
+  if (lightSweep) {
+    lightSweep.t += dt;
+    const p = lightSweep.t / 0.9;
+    if (p >= 1) {
+      lightSweep = null;
+    } else {
+      const d = lightSweep;
+      const span = Math.max(W, H) * 1.6;
+      const cx = W / 2 + d.dx * span * (p - 0.5);
+      const cy = PY + PH / 2 + d.dy * span * (p - 0.5);
+      const lg = ctx.createLinearGradient(
+        cx - d.dx * PW, cy - d.dy * PW,
+        cx + d.dx * PW, cy + d.dy * PW
+      );
+      const a = Math.sin(p * Math.PI) * 0.22;
+      lg.addColorStop(0,   "rgba(255,245,215,0)");
+      lg.addColorStop(0.5, `rgba(255,245,215,${a})`);
+      lg.addColorStop(1,   "rgba(255,245,215,0)");
+      ctx.save();
+      ctx.globalCompositeOperation = "lighter";
+      ctx.beginPath();
+      shapePath(ctx);
+      ctx.clip();
+      ctx.fillStyle = lg;
+      ctx.fillRect(0, 0, W, H);
+      ctx.restore();
+    }
+  }
+
+  drawCompleteRays(time);
+  drawWoodFrame();
+
+  requestAnimationFrame(frame);
+}
+
+/* ============================================================
+   起動:normalの窓から始める
+   ============================================================ */
+resize();
+newWindow("normal");
+requestAnimationFrame(frame);
+
+/* ============================================================
+   PWA:Service Worker登録(オフラインでも遊べるように)
+   ============================================================ */
+if ("serviceWorker" in navigator) {
+  window.addEventListener("load", () => {
+    navigator.serviceWorker.register("./sw.js").catch(() => {
+      /* 登録失敗時も通常のWebページとして動くので何もしない */
+    });
+  });
+}
+</script>
+</body>
+</html>
