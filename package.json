@@ -1,0 +1,12 @@
+{
+  "name": "stained-glass",
+  "version": "1.0.0",
+  "description": "大正ロマンの窓に硝子を嵌める、塗り絵の癒しアプリ",
+  "private": true,
+  "scripts": {
+    "start": "node serve.js",
+    "test": "node --test *.test.js",
+    "test:ui": "node browser-test.js"
+  },
+  "license": "MIT"
+}
