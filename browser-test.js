@@ -111,7 +111,18 @@ async function run() {
     let after = await state(phone);
     ok(after.fills[0] !== null, '押したセルに硝子が嵌まる');
     ok(after.remain === before.remain - 1, `のこり枚数が 1 減る (${before.remain} → ${after.remain})`);
-    ok(after.fills.filter((f) => f !== null).length === 1, '押していないセルは空のまま');
+    // 押した所の「持ち主と連れ」だけが嵌まり、他は空のまま
+    const host0 = after.hosts[0];
+    const group = after.hosts.map((h, i) => (h === host0 ? i : -1)).filter((i) => i >= 0);
+    const filledNow = after.fills.map((f, i) => (f !== null ? i : -1)).filter((i) => i >= 0);
+    ok(JSON.stringify(filledNow) === JSON.stringify(group),
+      `押した1か所ぶんだけが嵌まる (塗れた ${JSON.stringify(filledNow)} / その組 ${JSON.stringify(group)})`);
+    ok(new Set(group.map((i) => after.fills[i])).size === 1, '持ち主と連れは同じ硝子になる');
+
+    // 画面の「n left」と中身が合っているか
+    const shownRemain = (await phone.textContent('#remain')).trim();
+    ok(shownRemain === `${after.remain} left`,
+      `のこり枚数の表示と中身が合う (画面「${shownRemain}」/ 中身 ${after.remain})`);
 
     // 押した場所が、狙ったセルに入っているか(座標のずれよけ)
     const targets = [1, 2, Math.floor(after.cells.length / 2), after.cells.length - 1];
@@ -135,6 +146,74 @@ async function run() {
     const red = (await state(phone)).fills[3];
     const redShades = await phone.evaluate(() => window.Core.COLOR_FAMILIES[0].shades);
     ok(redShades.includes(red), `選んだ色の系統が嵌まる (${red})`);
+
+    // 操作帯が窓にかぶっていないか(かぶると、その下のセルが押せない)
+    const overlap = await phone.evaluate(() => {
+      const { panel } = window.__app.state();
+      return Math.round(panel.y + panel.h - document.getElementById('bar').getBoundingClientRect().top);
+    });
+    ok(overlap <= 0, `操作帯が窓にかぶらない (すき間 ${-overlap}px)`);
+
+    // ------------------------------------------------ 塗りかけが消えない
+    section('塗りかけが消えない');
+
+    // 閉じて開き直しても続きから
+    const kept = await state(phone);
+    const keptFilled = kept.fills.filter((f) => f !== null).length;
+    await phone.reload();
+    await phone.waitForFunction(() => window.__app && window.__app.state().cells.length > 0);
+    const back = await state(phone);
+    ok(back.fills.filter((f) => f !== null).length === keptFilled && keptFilled > 0,
+      `開き直しても塗りかけが残る (${keptFilled} 枚)`);
+    let worstGap = 0;
+    let sameShape = back.cells.length === kept.cells.length;
+    for (let i = 0; sameShape && i < kept.cells.length; i++) {
+      if (back.cells[i].length !== kept.cells[i].length) { sameShape = false; break; }
+      for (let k = 0; k < kept.cells[i].length; k++) {
+        worstGap = Math.max(worstGap,
+          Math.abs(back.cells[i][k][0] - kept.cells[i][k][0]),
+          Math.abs(back.cells[i][k][1] - kept.cells[i][k][1]));
+      }
+    }
+    ok(sameShape && worstGap < 1e-4,
+      `窓の割り方もそのまま戻る (ずれ ${(worstGap * 100).toFixed(4)}% 以内)`);
+    ok(back.remain === kept.remain, `のこり枚数もそのまま (${back.remain})`);
+
+    // 塗りかけのまま難易度を押したら、黙って消さずに一度聞く
+    await phone.locator('#btn-hard').tap();
+    await phone.waitForTimeout(80);
+    ok(await phone.evaluate(() => window.__app.asking()), '塗りかけを消す前に一度聞く');
+    const during = await state(phone);
+    ok(JSON.stringify(during.cells) === JSON.stringify(back.cells), '聞いている間は窓を変えない');
+
+    // 「やめる」なら、そのまま
+    await phone.locator('#ask-no').tap();
+    await phone.waitForTimeout(80);
+    const stay = await state(phone);
+    ok(!(await phone.evaluate(() => window.__app.asking())) &&
+       stay.fills.filter((f) => f !== null).length === keptFilled,
+      'やめると、塗りかけはそのまま');
+
+    // 「引き直す」なら新しい窓
+    await phone.locator('#btn-hard').tap();
+    await phone.waitForTimeout(80);
+    await phone.locator('#ask-yes').tap();
+    await phone.waitForTimeout(120);
+    const fresh = await state(phone);
+    ok(fresh.fills.every((f) => f === null) && fresh.cells.length > stay.cells.length,
+      `引き直すと新しい窓になる (${fresh.cells.length} 枚)`);
+
+    // 手つかずの窓なら、いちいち聞かない
+    await phone.locator('#btn-easy').tap();
+    await phone.waitForTimeout(120);
+    ok(!(await phone.evaluate(() => window.__app.asking())),
+      '手つかずの窓を引き直す時は聞かない');
+
+    // 壊れたものがしまってあっても、落ちずに開ける
+    await phone.evaluate(() => localStorage.setItem(window.__app.saveKey, '{壊れている'));
+    await phone.reload();
+    await phone.waitForFunction(() => window.__app && window.__app.state().cells.length > 0);
+    ok(true, '壊れたものがしまってあっても、普通に開ける');
 
     // ------------------------------------------------ 難易度
     section('難易度');
@@ -199,6 +278,12 @@ async function run() {
         `${withSlivers.cells.length - hostIdx.length} 枚) も、押すだけで完成する`);
     }
 
+    // 完成した窓から次へ行く時は、いちいち聞かない
+    await phone.locator('#btn-easy').tap();
+    await phone.waitForTimeout(120);
+    ok(!(await phone.evaluate(() => window.__app.asking())),
+      '完成したあと次の窓へ行く時は聞かない');
+
     // 完成後も描き続けて止まらないか
     const frames = await phone.evaluate(() => new Promise((resolve) => {
       let n = 0;
@@ -214,6 +299,9 @@ async function run() {
 
     // ------------------------------------------------ 画面をまわす
     section('画面をまわす');
+    await phone.evaluate(() => window.__app.fillAll());   // 硝子を嵌めた状態で回す
+    await phone.waitForTimeout(100);
+    const beforeTurn = (await state(phone)).fills.filter((f) => f !== null).length;
     await phone.setViewportSize({ width: 844, height: 390 });
     await phone.waitForTimeout(200);
     const land = await state(phone);
@@ -221,8 +309,8 @@ async function run() {
     ok(land.panel.x >= 0 && land.panel.y >= 0 &&
        land.panel.x + land.panel.w <= v.width && land.panel.y + land.panel.h <= v.height,
       '横向きにしても窓が画面からはみ出さない');
-    ok(land.fills.filter((f) => f !== null).length === land.cells.length,
-      '向きを変えても、嵌めた硝子が消えない');
+    ok(land.fills.filter((f) => f !== null).length === beforeTurn && beforeTurn > 0,
+      `向きを変えても、嵌めた硝子が消えない (${beforeTurn} 枚)`);
     await phone.setViewportSize({ width: 390, height: 844 });
 
     // ------------------------------------------------ アイコン

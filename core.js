@@ -122,6 +122,70 @@
   const clipToUnit = poly => clipConvex(poly, UNIT_RECT);
 
   /* ============================================================
+     塗りかけの窓を、しまう・取り出す
+     ------------------------------------------------------------
+     せっかく塗った窓が、閉じただけで消えるのは惜しい。
+     窓の形と嵌めた硝子をそのまま文字列にして持ち歩けるようにする。
+     壊れた中身を読み込んでも落ちないよう、取り出す側で必ず検める
+     (別の版で保存したもの・途中で切れたもの・人が書き換えたもの)。
+     ============================================================ */
+  const SAVE_VERSION = 1;
+
+  const round5 = (n) => Math.round(n * 1e5) / 1e5;   /* 小数を切って軽くする */
+
+  /** 窓の状態を、そのまま保存できる形にする */
+  function packWindow(win) {
+    return {
+      v: SAVE_VERSION,
+      diff: win.diff,
+      ratio: round5(win.ratio),
+      shape: win.shape,           /* 外形の key。手作り枠なら null */
+      handmade: win.handmade || null,
+      familyIdx: win.familyIdx,
+      completed: !!win.completed,
+      cells: win.cells.map(poly => poly.map(p => [round5(p[0]), round5(p[1])])),
+      fills: win.fills.slice(),
+    };
+  }
+
+  /** 保存した形から窓を取り出す。少しでもおかしければ null */
+  function unpackWindow(data) {
+    if (!data || data.v !== SAVE_VERSION) return null;
+    if (!Array.isArray(data.cells) || !Array.isArray(data.fills)) return null;
+    if (data.cells.length === 0 || data.cells.length !== data.fills.length) return null;
+    if (!DIFF_TARGET[data.diff]) return null;
+    if (!(typeof data.ratio === 'number' && data.ratio > 0 && data.ratio < 10)) return null;
+    if (data.shape !== null && data.shape !== undefined &&
+        !WINDOW_SHAPES.some(s => s.key === data.shape)) return null;
+    if (data.handmade !== null && data.handmade !== undefined &&
+        !HANDMADE.some(f => f.name === data.handmade)) return null;
+
+    for (const poly of data.cells) {
+      if (!Array.isArray(poly) || poly.length < 3) return null;
+      for (const p of poly) {
+        if (!Array.isArray(p) || p.length !== 2) return null;
+        if (!Number.isFinite(p[0]) || !Number.isFinite(p[1])) return null;
+      }
+    }
+    for (const f of data.fills) {
+      if (f !== null && !/^#[0-9a-f]{6}$/.test(f)) return null;
+    }
+    const familyIdx = Number.isInteger(data.familyIdx) &&
+      data.familyIdx >= 0 && data.familyIdx < COLOR_FAMILIES.length ? data.familyIdx : 0;
+
+    return {
+      diff: data.diff,
+      ratio: data.ratio,
+      shape: data.shape || null,
+      handmade: data.handmade || null,
+      familyIdx,
+      completed: !!data.completed && data.fills.every(f => f !== null),
+      cells: data.cells.map(poly => poly.map(p => [p[0], p[1]])),
+      fills: data.fills.slice(),
+    };
+  }
+
+  /* ============================================================
      押せないかけらを、隣の押せるセルに預ける
      ------------------------------------------------------------
      割る側は最小サイズを守っているが、そのあと窓の外形で切り抜くと、
@@ -485,5 +549,6 @@
     WINDOW_SHAPES, HANDMADE, HANDMADE_BY_DIFF,
     DIFF_TARGET, DIFF_MIN_PX, randomFrame,
     TAP_MIN_PX, attachSlivers,
+    SAVE_VERSION, packWindow, unpackWindow,
   };
 });

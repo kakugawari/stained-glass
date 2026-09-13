@@ -69,6 +69,23 @@
     padding: 10px 8px calc(10px + env(safe-area-inset-bottom));
     background: linear-gradient(to top, rgba(10,8,6,0.88), rgba(10,8,6,0));
   }
+  /* ===== 引き直しの確認(操作帯の上に出る) ===== */
+  #ask {
+    display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+    justify-content: center;
+    padding: 8px 10px; margin-bottom: 2px;
+    border: 1px solid rgba(215,200,170,0.22);
+    border-radius: 6px;
+    background: rgba(20,16,12,0.92);
+    color: rgba(215,200,170,0.9);
+    font-size: 12px; letter-spacing: 0.06em;
+  }
+  /* ID 指定は [hidden]{display:none} より強い。閉じている時は必ず消す
+     (消し忘れると、操作帯が窓の下をふさいでセルが押せなくなる) */
+  #ask[hidden] { display: none; }
+  #ask .btn { font-size: 12px; padding: 6px 12px; }
+  #ask-yes { border-color: rgba(215,190,140,0.55); }
+
   #swatches {
     display: flex; gap: 7px; justify-content: center; flex-wrap: nowrap;
   }
@@ -109,6 +126,11 @@
 <div id="remain" class="hidden"></div>
 
 <div id="bar">
+  <div id="ask" hidden>
+    <span id="ask-text">塗りかけの窓を消して、引き直しますか？</span>
+    <button class="btn" id="ask-yes">引き直す</button>
+    <button class="btn" id="ask-no">やめる</button>
+  </div>
   <div id="swatches"></div>
   <div id="buttons">
     <button class="btn" id="btn-easy">easy</button>
@@ -137,7 +159,11 @@
 const {
   COLOR_FAMILIES, clipConvex, UNIT_RECT, pointInPoly, attachSlivers,
   WINDOW_SHAPES, HANDMADE, HANDMADE_BY_DIFF, randomFrame,
+  packWindow, unpackWindow,
 } = window.Core;
+
+/* 塗りかけの窓のしまい場所。開き直したら続きから */
+const SAVE_KEY = "stained-glass:window";
 
 const cv  = document.getElementById("cv");
 const ctx = cv.getContext("2d");
@@ -189,6 +215,7 @@ COLOR_FAMILIES.forEach((fam, i) => {
     familyIdx = i;
     for (const c of swatchesEl.children) c.classList.remove("active");
     el.classList.add("active");
+    saveSoon();
   });
   swatchesEl.appendChild(el);
 });
@@ -207,6 +234,9 @@ let hosts = [];   /* 各セルを押して嵌める時の持ち主(細いかけ�
 
 let completed = false;
 let completeGlow = 0;
+let curDiff = "normal";       /* いま選んでいる難易度 */
+let curShape = null;          /* 外形の key(手作り枠なら null) */
+let curHandmade = null;       /* 手作り枠の名前(ランダム枠なら null) */
 let shapePoly = WINDOW_SHAPES[0].poly.call(WINDOW_SHAPES[0]);   /* 現在の外形 */
 
 /* 押せる大きさは画面の大きさで変わる(向きを変えた時など)。
@@ -247,6 +277,7 @@ function updateRemain() {
 
 /* 難易度を選んで新しい窓を用意する */
 function newWindow(diffKey) {
+  curDiff = diffKey;
   /* ボタンの点灯 */
   for (const [k, id] of Object.entries(DIFF_BTN)) {
     document.getElementById(id).classList.toggle("active", k === diffKey);
@@ -261,6 +292,8 @@ function newWindow(diffKey) {
     shapePoly = UNIT_RECT;
     layoutPanel();
     cells = hm.build();
+    curShape = null;
+    curHandmade = hm.name;
     showFrameName(hm.name);
   } else {
     /* ランダム枠:外形を抽選して左右対称生成、外形で切り抜く */
@@ -275,6 +308,8 @@ function newWindow(diffKey) {
         ? poly : clipConvex(poly, shapePoly);
       if (clipped) cells.push(clipped);
     }
+    curShape = shape.key;
+    curHandmade = null;
     showFrameName(shape.name);
   }
 
@@ -285,13 +320,111 @@ function newWindow(diffKey) {
   glints.length = 0;
   updateRemain();
   redrawGlass();
+  saveNow();
 }
 
 const DIFF_BTN = {
   easy: "btn-easy", normal: "btn-normal", hard: "btn-hard", vhard: "btn-vhard",
 };
+
+/* ============================================================
+   塗りかけの窓をしまう・取り出す
+   ------------------------------------------------------------
+   一枚ごとに書き込むと、そのたびに一瞬止まる。書き込みはまとめる。
+   閉じられる時(タブを隠す・離れる)は取りこぼさないよう、その場で書く。
+   ============================================================ */
+let saveTimer = null;
+
+function saveNow() {
+  clearTimeout(saveTimer);
+  saveTimer = null;
+  if (cells.length === 0) return;
+  try {
+    localStorage.setItem(SAVE_KEY, JSON.stringify(packWindow({
+      diff: curDiff, ratio: panelRatio, shape: curShape, handmade: curHandmade,
+      familyIdx, completed, cells, fills,
+    })));
+  } catch (e) {
+    /* 空き容量がない・シークレットウィンドウ。遊ぶのに支障はないので黙って続ける */
+  }
+}
+
+function saveSoon() {
+  if (saveTimer !== null) return;
+  saveTimer = setTimeout(saveNow, 700);
+}
+
+/* しまってある窓を取り出して組み直す。無ければ false */
+function restoreSaved() {
+  let win = null;
+  try {
+    win = unpackWindow(JSON.parse(localStorage.getItem(SAVE_KEY)));
+  } catch (e) {
+    win = null;
+  }
+  if (!win) return false;
+
+  curDiff = win.diff;
+  curShape = win.shape;
+  curHandmade = win.handmade;
+  panelRatio = win.ratio;
+  shapePoly = win.shape
+    ? WINDOW_SHAPES.find(s => s.key === win.shape).poly()
+    : UNIT_RECT;
+  layoutPanel();
+  cells = win.cells;
+  fills = win.fills;
+  completed = win.completed;
+  completeGlow = win.completed ? 1 : 0;
+  glints.length = 0;
+  refreshHosts();
+
+  familyIdx = win.familyIdx;
+  for (let i = 0; i < swatchesEl.children.length; i++) {
+    swatchesEl.children[i].classList.toggle("active", i === familyIdx);
+  }
+  for (const [k, id] of Object.entries(DIFF_BTN)) {
+    document.getElementById(id).classList.toggle("active", k === curDiff);
+  }
+  updateRemain();
+  redrawGlass();
+  return true;
+}
+
+/* 閉じられる時は取りこぼさない */
+document.addEventListener("visibilitychange", () => {
+  if (document.visibilityState === "hidden") saveNow();
+});
+window.addEventListener("pagehide", saveNow);
+
+/* ============================================================
+   引き直しの確認(塗りかけを黙って消さない)
+   ============================================================ */
+const askEl = document.getElementById("ask");
+let pendingDiff = null;
+
+function askRedraw(diffKey) {
+  pendingDiff = diffKey;
+  askEl.hidden = false;
+}
+function closeAsk() {
+  pendingDiff = null;
+  askEl.hidden = true;
+}
+document.getElementById("ask-yes").addEventListener("click", () => {
+  const diff = pendingDiff;
+  closeAsk();
+  if (diff) newWindow(diff);
+});
+document.getElementById("ask-no").addEventListener("click", closeAsk);
 for (const [k, id] of Object.entries(DIFF_BTN)) {
-  document.getElementById(id).addEventListener("click", () => newWindow(k));
+  document.getElementById(id).addEventListener("click", () => {
+    closeAsk();
+    /* 塗りかけ(まだ完成していないのに硝子が入っている)なら、消す前に一度聞く */
+    const touched = fills.some(f => f !== null);
+    if (touched && !completed) askRedraw(k);
+    else newWindow(k);
+  });
 }
 
 /* ============================================================
@@ -471,6 +604,9 @@ function tapCell(x, y) {
       if (!completed && fills.every(f => f !== null)) {
         completed = true;
         pealBells();
+        saveNow();
+      } else {
+        saveSoon();
       }
       return;
     }
@@ -685,10 +821,10 @@ function frame(now) {
 }
 
 /* ============================================================
-   起動:normalの窓から始める
+   起動:前の窓が残っていれば続きから。無ければ normal の窓から
    ============================================================ */
 resize();
-newWindow("normal");
+if (!restoreSaved()) newWindow("normal");
 requestAnimationFrame(frame);
 
 /* ============================================================
@@ -698,7 +834,9 @@ window.__app = {
   /* いまの窓の中身 */
   state: () => ({
     cells, fills, hosts, completed,
-    remain: fills.filter(f => f === null).length,
+    /* 画面の「n left」と同じ数え方(あと何回押せば埋まるか) */
+    remain: fills.filter((f, i) => f === null && hosts[i] === i).length,
+    remainCells: fills.filter(f => f === null).length,
     panel: { x: PX, y: PY, w: PW, h: PH },
   }),
   /* セルの中心の画面座標(指で押す場所を測るのに使う) */
@@ -710,6 +848,8 @@ window.__app = {
   },
   newWindow,
   tapCell,
+  saveKey: SAVE_KEY,
+  asking: () => !document.getElementById("ask").hidden,
   /* 音を鳴らさずに全部埋める(完成時の見た目だけ確かめたい時) */
   fillAll: () => {
     for (let i = 0; i < fills.length; i++) if (!fills[i]) fills[i] = pickShade();

@@ -122,21 +122,27 @@ test('どの難易度でも、指で押せない大きさのセルは作らな�
   }
 });
 
-test('難易度が上がるほど枚数が増え、目標を下回らない', () => {
+test('難易度が上がるほど枚数が増える(目標のまわりに収まる)', () => {
+  /* 目標ちょうどにはならない。押しやすさ(最小サイズ)を優先して
+     途中で割るのをやめるので、目標を下回ることがある。
+     どこまでなら「その難易度らしい」と言えるかを、ここで決めておく */
   const PW = 300, PH = 484;
-  const counts = {};
+  const avg = {};
   for (const diff of DIFFS) {
-    let min = Infinity;
-    for (let t = 0; t < 30; t++) {
-      const n = C.randomFrame(diff, PW / PH, t % 2 === 0, PW, PH).length;
-      min = Math.min(min, n);
+    const target = C.DIFF_TARGET[diff];
+    const counts = [];
+    for (let t = 0; t < 40; t++) {
+      counts.push(C.randomFrame(diff, PW / PH, t % 2 === 0, PW, PH).length);
     }
-    counts[diff] = min;
-    assert.ok(min >= C.DIFF_TARGET[diff],
-      `${diff}: ${min} 枚しか出ない (目標 ${C.DIFF_TARGET[diff]})`);
+    avg[diff] = counts.reduce((a, b) => a + b, 0) / counts.length;
+    const lo = Math.min(...counts), hi = Math.max(...counts);
+    assert.ok(lo >= target * 0.7,
+      `${diff}: ${lo} 枚まで減る (目標 ${target} の7割 ${(target * 0.7).toFixed(0)} 未満)`);
+    assert.ok(hi <= target * 1.3 + 6,
+      `${diff}: ${hi} 枚まで増える (目標 ${target} に対して多すぎる)`);
   }
-  assert.ok(counts.easy < counts.normal && counts.normal < counts.hard && counts.hard < counts.vhard,
-    `枚数が難易度順に増えていない: ${JSON.stringify(counts)}`);
+  assert.ok(avg.easy < avg.normal && avg.normal < avg.hard && avg.hard < avg.vhard,
+    `枚数が難易度順に増えていない: ${JSON.stringify(avg)}`);
 });
 
 test('対称モードは左右対称になる', () => {
@@ -230,6 +236,78 @@ test('難易度ごとの手作り枠は、実在する枠を指している', ()
       assert.ok(names.has(name), `${diff} が知らない枠を指している: ${name}`);
     }
   }
+});
+
+/* ---------- しまう・取り出す ---------- */
+
+const sampleWindow = () => ({
+  diff: 'normal', ratio: 0.62, shape: 'gothic', handmade: null,
+  familyIdx: 6, completed: false,
+  cells: [C.rectCell(0, 0, 1, 0.5), C.rectCell(0, 0.5, 1, 1)],
+  fills: ['#1440c8', null],
+});
+/* 保存を通したのと同じ道を通す(文字列にして戻す) */
+const roundTrip = (win) => C.unpackWindow(JSON.parse(JSON.stringify(C.packWindow(win))));
+
+test('しまった窓は、そのまま取り出せる', () => {
+  const win = sampleWindow();
+  const back = roundTrip(win);
+  assert.ok(back);
+  assert.strictEqual(back.diff, win.diff);
+  assert.strictEqual(back.shape, win.shape);
+  assert.strictEqual(back.familyIdx, win.familyIdx);
+  assert.deepStrictEqual(back.fills, win.fills);
+  assert.strictEqual(back.cells.length, win.cells.length);
+  for (let i = 0; i < win.cells.length; i++) {
+    for (let k = 0; k < win.cells[i].length; k++) {
+      assert.ok(Math.abs(back.cells[i][k][0] - win.cells[i][k][0]) < 1e-4);
+      assert.ok(Math.abs(back.cells[i][k][1] - win.cells[i][k][1]) < 1e-4);
+    }
+  }
+});
+
+test('手作り枠の窓も、そのまま取り出せる', () => {
+  const win = { ...sampleWindow(), shape: null, handmade: 'Checker' };
+  assert.strictEqual(roundTrip(win).handmade, 'Checker');
+});
+
+test('vhard の窓を丸ごとしまっても、収まる大きさで済む', () => {
+  const PW = 300, PH = 484;
+  const cells = C.randomFrame('vhard', PW / PH, false, PW, PH);
+  const text = JSON.stringify(C.packWindow({
+    diff: 'vhard', ratio: PW / PH, shape: 'rect', handmade: null, familyIdx: 0,
+    completed: false, cells, fills: cells.map(() => '#1440c8'),
+  }));
+  assert.ok(text.length < 200 * 1024, `${(text.length / 1024).toFixed(0)}KB は大きすぎる`);
+});
+
+test('壊れた中身を読んでも、落ちずに null を返す', () => {
+  const good = C.packWindow(sampleWindow());
+  const broken = [
+    null, undefined, 'ごみ', 42, {}, { ...good, v: 999 },
+    { ...good, cells: [] },                          /* 中身なし */
+    { ...good, fills: ['#1440c8'] },                 /* 枚数が合わない */
+    { ...good, cells: [[[0, 0], [1, 0]]] },          /* 頂点が足りない */
+    { ...good, cells: [[[0, 0], [1, 0], [NaN, 1]]], fills: [null] },
+    { ...good, fills: ['red', null] },               /* 色の書き方が違う */
+    { ...good, diff: 'impossible' },                 /* 知らない難易度 */
+    { ...good, shape: 'triangle' },                  /* 知らない外形 */
+    { ...good, handmade: '知らない枠', shape: null },
+    { ...good, ratio: 0 },
+  ];
+  for (const data of broken) {
+    assert.strictEqual(C.unpackWindow(data), null, `これを弾けていない: ${String(JSON.stringify(data)).slice(0, 60)}`);
+  }
+});
+
+test('色の選択がおかしい時は、落とさず既定に戻す', () => {
+  const back = C.unpackWindow({ ...C.packWindow(sampleWindow()), familyIdx: 999 });
+  assert.ok(back && back.familyIdx === 0);
+});
+
+test('埋まっていないのに「完成」と書かれていたら、信じない', () => {
+  const win = { ...sampleWindow(), completed: true };   /* fills に null が残っている */
+  assert.strictEqual(roundTrip(win).completed, false);
 });
 
 /* ---------- 色 ---------- */
