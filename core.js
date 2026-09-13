@@ -118,6 +118,30 @@
     return inside;
   }
 
+  /* セルの中にある点を1つ返す。
+     頂点の平均はふつう中に入るが、扇形の輪のように凹んだセルでは外へ出る
+     (実測 22689枚中16枚、Wheel Window の輪)。外に出ると、光の差し込みが
+     よそに描かれ、テストで「その一枚を押す」こともできなくなる */
+  function insidePoint(poly) {
+    let ax = 0, ay = 0;
+    for (const p of poly) { ax += p[0]; ay += p[1]; }
+    ax /= poly.length; ay /= poly.length;
+    if (pointInPoly(ax, ay, poly)) return [ax, ay];
+
+    /* 三角形に切り分けて、中に入るものを探す */
+    for (let i = 1; i < poly.length - 1; i++) {
+      const x = (poly[0][0] + poly[i][0] + poly[i + 1][0]) / 3;
+      const y = (poly[0][1] + poly[i][1] + poly[i + 1][1]) / 3;
+      if (pointInPoly(x, y, poly)) return [x, y];
+    }
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], b = poly[(i + 1) % poly.length], c = poly[(i + 2) % poly.length];
+      const x = (a[0] + b[0] + c[0]) / 3, y = (a[1] + b[1] + c[1]) / 3;
+      if (pointInPoly(x, y, poly)) return [x, y];
+    }
+    return [ax, ay];
+  }
+
   const UNIT_RECT = [[0, 0], [1, 0], [1, 1], [0, 1]];
   const clipToUnit = poly => clipConvex(poly, UNIT_RECT);
 
@@ -183,6 +207,18 @@
       cells: data.cells.map(poly => poly.map(p => [p[0], p[1]])),
       fills: data.fills.slice(),
     };
+  }
+
+  /* 色の明るさ(0〜1)。硝子をどれだけ光らせるかを、その色の明るさで決めるのに使う。
+     暗い硝子に白を足すと、深い藍も深い臙脂も、ただの中間色になってしまう */
+  function relLuminance(hex) {
+    const m = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/i.exec(hex || '');
+    if (!m) return 0.5;
+    const f = (h) => {
+      const c = parseInt(h, 16) / 255;
+      return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+    };
+    return 0.2126 * f(m[1]) + 0.7152 * f(m[2]) + 0.0722 * f(m[3]);
   }
 
   /* ============================================================
@@ -682,8 +718,8 @@
   }
 
   return {
-    COLOR_FAMILIES,
-    rectCell, diamondSplit, gridCells, polyArea, clipConvex, clipToUnit, UNIT_RECT, pointInPoly,
+    COLOR_FAMILIES, relLuminance,
+    rectCell, diamondSplit, gridCells, polyArea, clipConvex, clipToUnit, UNIT_RECT, pointInPoly, insidePoint,
     WINDOW_SHAPES, HANDMADE, HANDMADE_BY_DIFF, fitsDifficulty, fitSlack, FIT_PANEL,
     DIFF_TARGET, DIFF_MIN_PX, randomFrame,
     TAP_MIN_PX, attachSlivers,

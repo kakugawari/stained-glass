@@ -85,6 +85,30 @@ test('点が中か外か', () => {
   assert.ok(!C.pointInPoly(0.8, 0.8, tri), '斜辺の外は外');
 });
 
+test('どのセルにも、その中にある点をちゃんと返す', () => {
+  /* 押す場所を決めるのに使う。外に出ると、そのセルは押せない */
+  const check = (cells, what) => {
+    for (const cell of cells) {
+      const [u, v] = C.insidePoint(cell);
+      assert.ok(C.pointInPoly(u, v, cell),
+        `${what}: 返した点 (${u.toFixed(3)}, ${v.toFixed(3)}) がセルの外`);
+    }
+  };
+  for (const shape of C.WINDOW_SHAPES) {
+    for (const diff of DIFFS) {
+      for (let t = 0; t < 5; t++) {
+        const cells = C.randomFrame(diff, shape.ratio, t % 2 === 0, 300, 484)
+          .map(p => (shape.key === 'rect' || shape.key === 'square' ? p : C.clipConvex(p, shape.poly())))
+          .filter(Boolean);
+        check(cells, `${shape.name} ${diff}`);
+      }
+    }
+  }
+  for (const frame of C.HANDMADE) {
+    for (const diff of DIFFS) check(frame.build(C.DIFF_TARGET[diff]), `${frame.name} ${diff}`);
+  }
+});
+
 /* ---------- ランダム枠 ---------- */
 
 test('ランダム枠は窓を隙間なく、重なりなく埋める', () => {
