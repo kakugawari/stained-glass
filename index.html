@@ -347,6 +347,7 @@ function newWindow(diffKey) {
       symmetric: Math.random() < 0.5,     /* 対称/非対称は半々 */
       panelW: PW, panelH: PH,
       border: Math.random() < BORDER_CHANCE,
+      curve: true,           /* 鉛線を弧に曲げる(手作り枠はまっすぐのまま) */
     });
     curShape = shape.key;
     curHandmade = null;

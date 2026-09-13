@@ -101,7 +101,10 @@
       }
       if (out.length === 0) return null;
     }
-    return Math.abs(polyArea(out)) < 0.0008 ? null : out;
+    /* 削りかすは捨てる。ただし捨てすぎると、外形のふちに埋められない穴が残る
+       (実測: 基準 0.0008 では縁から 31px の深さまで抜けていた。木枠が隠すのは 15px)。
+       いまは小さなかけらも隣のセルに預けて一緒に嵌まるので、ここは細かくてよい */
+    return Math.abs(polyArea(out)) < 0.00008 ? null : out;
   }
 
   /* 点がポリゴンの中にあるか(交差回数で判定)。
@@ -726,6 +729,235 @@
   }
 
   /* ============================================================
+     鉛線を曲げる
+     ------------------------------------------------------------
+     割り方はそのままに、出来上がった鉛線(セルの辺)を弧へ膨らませる。
+     隣り合う2枚が「同じ弧」を共有するので、隙間も重なりも出ない。
+     そのために、まず T 字の辺をそろえる(長い辺の途中に隣の角が
+     載っている所で、辺を切っておく)。
+     ============================================================ */
+
+  /* T字をそろえる。どの内側の辺も、ちょうど2枚で共有される形にする */
+  function conformCells(cells, panelW, panelH, epsPx = 0.25) {
+    const pts = [];
+    const seen = new Set();
+    for (const c of cells) {
+      for (const p of c) {
+        const k = `${p[0].toFixed(6)},${p[1].toFixed(6)}`;
+        if (!seen.has(k)) { seen.add(k); pts.push(p); }
+      }
+    }
+    const out = [];
+    for (const c of cells) {
+      const poly = [];
+      for (let i = 0; i < c.length; i++) {
+        const a = c[i], b = c[(i + 1) % c.length];
+        poly.push(a);
+        const ax = a[0] * panelW, ay = a[1] * panelH;
+        const bx = b[0] * panelW, by = b[1] * panelH;
+        const ex = bx - ax, ey = by - ay;
+        const len2 = ex * ex + ey * ey;
+        if (len2 < 1e-12) continue;
+        const on = [];
+        for (const p of pts) {
+          const px = p[0] * panelW, py = p[1] * panelH;
+          const t = ((px - ax) * ex + (py - ay) * ey) / len2;
+          if (t <= 1e-6 || t >= 1 - 1e-6) continue;
+          const dx = px - (ax + ex * t), dy = py - (ay + ey * t);
+          if (dx * dx + dy * dy > epsPx * epsPx) continue;
+          on.push({ t, p });
+        }
+        on.sort((x, y) => x.t - y.t);
+        for (const o of on) poly.push(o.p);
+      }
+      out.push(poly);
+    }
+    return out;
+  }
+
+  /* 線分どうしが(端をのぞいて)交わるか */
+  function segmentsCross(a, b, c, d) {
+    const r = [b[0] - a[0], b[1] - a[1]], s = [d[0] - c[0], d[1] - c[1]];
+    const den = r[0] * s[1] - r[1] * s[0];
+    if (Math.abs(den) < 1e-15) return false;
+    const t = ((c[0] - a[0]) * s[1] - (c[1] - a[1]) * s[0]) / den;
+    const u = ((c[0] - a[0]) * r[1] - (c[1] - a[1]) * r[0]) / den;
+    return t > 1e-9 && t < 1 - 1e-9 && u > 1e-9 && u < 1 - 1e-9;
+  }
+
+  /* 多角形の辺どうしが交わっていないか(壊れた形の見分け) */
+  function selfCrosses(poly) {
+    for (let i = 0; i < poly.length; i++) {
+      for (let j = i + 2; j < poly.length; j++) {
+        if (i === 0 && j === poly.length - 1) continue;
+        if (segmentsCross(poly[i], poly[(i + 1) % poly.length],
+                          poly[j], poly[(j + 1) % poly.length])) return true;
+      }
+    }
+    return false;
+  }
+
+  /* その弧を入れても、セルの形が壊れない(自分の他の辺と交わらない)か。
+     細長い三日月のようなセルでは、弧が向かいの辺を突き抜けてしまう。
+     太さを見積もって避けるのではなく、実際に交わるかどうかを確かめる */
+  function bowFits(cell, edgeIdx, pts) {
+    const n = cell.length;
+    const a = cell[edgeIdx], b = cell[(edgeIdx + 1) % n];
+    const chain = [a, ...pts, b];
+    for (let i = 0; i < chain.length - 1; i++) {
+      for (let j = 0; j < n; j++) {
+        if (j === edgeIdx) continue;                       /* 置き換える辺そのもの */
+        if (j === (edgeIdx + 1) % n || j === (edgeIdx - 1 + n) % n) continue;   /* 端でつながる辺 */
+        if (segmentsCross(chain[i], chain[i + 1], cell[j], cell[(j + 1) % n])) return false;
+      }
+    }
+    return true;
+  }
+
+  /* 2点を結ぶ弧(ふくらみ s px)の、途中の点を返す */
+  function bowPoints(a, b, s, k, panelW, panelH) {
+    const ax = a[0] * panelW, ay = a[1] * panelH;
+    const bx = b[0] * panelW, by = b[1] * panelH;
+    const ex = bx - ax, ey = by - ay;
+    const len = Math.hypot(ex, ey);
+    if (len < 1e-9) return [];
+    /* 二次ベジエ:制御点を中点から法線方向へ 2s ずらすと、最大のふくらみが s */
+    const cxp = (ax + bx) / 2 - ey / len * 2 * s;
+    const cyp = (ay + by) / 2 + ex / len * 2 * s;
+    const out = [];
+    for (let i = 1; i <= k; i++) {
+      const t = i / (k + 1), u = 1 - t;
+      const x = u * u * ax + 2 * u * t * cxp + t * t * bx;
+      const y = u * u * ay + 2 * u * t * cyp + t * t * by;
+      out.push([x / panelW, y / panelH]);
+    }
+    return out;
+  }
+
+  /* 鉛線を弧へ。cells は conformCells を通したもの。
+     opts: chance(曲げる割合) bow(ふくらみ/辺の長さ) minLenPx keep(曲げないセル番号)
+           symmetric(左右対称の窓なら、曲げ方も鏡写しにする) rand */
+  function curveLeading(cells, opts) {
+    const { panelW, panelH } = opts;
+    const chance = opts.chance === undefined ? 0.5 : opts.chance;
+    const bow = opts.bow === undefined ? 0.11 : opts.bow;
+    const minLen = opts.minLenPx === undefined ? 22 : opts.minLenPx;
+    const keep = opts.keep || new Set();
+    const rand = opts.rand || Math.random;
+
+    /* セルの短いほうの幅(px)。細いセルを弧でつぶさないための上限に使う */
+    const slim = cells.map(c => {
+      const xs = c.map(p => p[0]), ys = c.map(p => p[1]);
+      return Math.min((Math.max(...xs) - Math.min(...xs)) * panelW,
+                      (Math.max(...ys) - Math.min(...ys)) * panelH);
+    });
+
+    const at = (p) => `${p[0].toFixed(6)},${p[1].toFixed(6)}`;
+    const key = (a, b) => (at(a) < at(b) ? at(a) + '|' + at(b) : at(b) + '|' + at(a));
+    const head = (k) => k.split('|')[0];          /* その辺をたどる向きの決め方 */
+
+    /* 辺を集める */
+    const edges = new Map();
+    for (let ci = 0; ci < cells.length; ci++) {
+      const c = cells[ci];
+      for (let i = 0; i < c.length; i++) {
+        const k = key(c[i], c[(i + 1) % c.length]);
+        const rec = edges.get(k) || [];
+        rec.push({ ci, i });
+        edges.set(k, rec);
+      }
+    }
+
+    /* どの辺をどう曲げるか決める。点は「key の若いほうの端」から並べて持つ */
+    const bows = new Map();
+    const done = new Set();     /* 曲げない、と決めた辺もここに入れる */
+    const sortPts = (k, from, pts) => (at(from) === head(k) ? pts : pts.slice().reverse());
+
+    for (const [k, rec] of edges) {
+      if (done.has(k)) continue;
+      done.add(k);
+      if (rec.length !== 2) continue;                             /* 窓のふちは曲げない */
+      if (keep.has(rec[0].ci) || keep.has(rec[1].ci)) continue;   /* 帯は曲げない */
+      const c0 = cells[rec[0].ci];
+      const a = c0[rec[0].i], b = c0[(rec[0].i + 1) % c0.length];
+      const ma = [1 - a[0], a[1]], mb = [1 - b[0], b[1]];
+      const mk = key(ma, mb);
+
+      /* 左右対称の窓では、鏡写しの辺と一緒に決める。
+         決めた事は「曲げない」も含めて伝える(片方だけ曲がると対称が崩れる)。
+         真ん中の線の上に載っている辺は、曲げると必ず左右が食い違うので、そのまま */
+      const pair = opts.symmetric && mk !== k && edges.has(mk);
+      if (pair) done.add(mk);
+      if (opts.symmetric && mk === k &&
+          Math.abs(a[0] - 0.5) < 1e-6 && Math.abs(b[0] - 0.5) < 1e-6) continue;
+
+      const len = Math.hypot((b[0] - a[0]) * panelW, (b[1] - a[1]) * panelH);
+      if (len < minLen) continue;
+      if (rand() >= chance) continue;
+      /* もともと細いセルは曲げない。弧がえぐると、押せる面積が残らない
+         (実測: この一行が無いと、いちばん小さいセルが 199px² → 133px² になる) */
+      const thin = Math.min(slim[rec[0].ci], slim[rec[1].ci]);
+      if (thin < TAP_MIN_PX * 1.4) continue;
+      const room = thin * 0.20;
+      const n = Math.min(6, Math.max(2, Math.round(len / 14)));
+      const dir = rand() < 0.5 ? 1 : -1;
+      const want = Math.min(len * bow * (0.6 + 0.6 * rand()), room);
+
+      /* 入るふくらみを探す。だめなら半分にして試し、それでもだめなら曲げない */
+      let pts = null;
+      for (let s = want; s >= 1.2; s /= 2) {
+        const cand = bowPoints(a, b, s * dir, n, panelW, panelH);
+        if (bowFits(cells[rec[0].ci], rec[0].i, cand) &&
+            bowFits(cells[rec[1].ci], rec[1].i, cand.slice().reverse())) { pts = cand; break; }
+      }
+      if (!pts) continue;
+
+      bows.set(k, sortPts(k, a, pts));
+      if (pair) bows.set(mk, sortPts(mk, ma, pts.map(p => [1 - p[0], p[1]])));
+    }
+
+    /* 差し込む(セルがたどる向きに合わせて並べ替える) */
+    const apply = () => cells.map(c => {
+      const poly = [];
+      for (let i = 0; i < c.length; i++) {
+        poly.push(c[i]);
+        const pts = bows.get(key(c[i], c[(i + 1) % c.length]));
+        if (pts) poly.push(...sortPts(k2(c, i), c[i], pts));
+      }
+      return poly;
+    });
+    const k2 = (c, i) => key(c[i], c[(i + 1) % c.length]);
+
+    /* 弧は1本ずつ確かめて入れているが、同じセルに2本入ると弧どうしが交わることがある。
+       出来上がりを検めて、壊れていたらそのセルの弧を1本ずつ外す */
+    for (let pass = 0; pass < 8; pass++) {
+      const out = apply();
+      let broken = -1;
+      for (let ci = 0; ci < out.length; ci++) if (selfCrosses(out[ci])) { broken = ci; break; }
+      if (broken < 0) return out;
+      const c = cells[broken];
+      let drop = null, worst = -1;
+      for (let i = 0; i < c.length; i++) {
+        const k = k2(c, i);
+        const pts = bows.get(k);
+        if (!pts) continue;
+        /* ふくらみのいちばん大きい弧から外す */
+        const a = c[i], b = c[(i + 1) % c.length];
+        let d = 0;
+        for (const p of pts) {
+          const ex = (b[0] - a[0]) * panelW, ey = (b[1] - a[1]) * panelH;
+          const len = Math.hypot(ex, ey) || 1;
+          d = Math.max(d, Math.abs(((p[0] - a[0]) * panelW * ey - (p[1] - a[1]) * panelH * ex) / len));
+        }
+        if (d > worst) { worst = d; drop = k; }
+      }
+      if (!drop) break;      /* 弧が無いのに壊れている = ここでは直せない */
+      bows.delete(drop);
+    }
+    return apply();
+  }
+
+  /* ============================================================
      窓を1枚ぶん作る(縁取り + 内側)。画面を触らないのでここに置ける
      ============================================================ */
   function makeWindow(opts) {
@@ -736,12 +968,14 @@
 
     const build = (border) => {
       const cells = [];
+      cells.ringCount = 0;
       let inner = shapePoly;
       if (border) {
         const plan = borderPlan(diff, panelW, panelH);
         const ins = insetConvex(shapePoly, plan.band, panelW, panelH);
         if (ins) {
           cells.push(...ringCells(shapePoly, ins, plan.pieceLen, panelW, panelH));
+          cells.ringCount = cells.length;     /* 帯は先頭から並ぶ */
           inner = ins;
         }
       }
@@ -761,14 +995,26 @@
       return cells;
     };
 
+    const finish = (cells, ringCount) => {
+      if (!opts.curve) return cells;
+      const keep = new Set();
+      for (let i = 0; i < ringCount; i++) keep.add(i);   /* 帯はまっすぐのまま */
+      return curveLeading(conformCells(cells, panelW, panelH), {
+        panelW, panelH, keep, symmetric,
+        chance: opts.curveChance, bow: opts.curveBow, rand: opts.rand,
+      });
+    };
+
     const cells = build(withBorder);
-    if (!withBorder || cells.length >= target * 0.8) return cells;
+    if (!withBorder || cells.length >= target * 0.8) return finish(cells, cells.ringCount || 0);
 
     /* 小さい画面の四角窓・丸窓では、帯が面積を食って枚数が落ちる。
        そういう時は帯をあきらめ、目標に近いほうを採る
        (同じ難易度なら同じ手応え、を枚数で守る) */
     const plain = build(false);
-    return Math.abs(plain.length - target) < Math.abs(cells.length - target) ? plain : cells;
+    return Math.abs(plain.length - target) < Math.abs(cells.length - target)
+      ? finish(plain, 0)
+      : finish(cells, cells.ringCount || 0);
   }
 
   /* ============================================================
@@ -865,6 +1111,7 @@
     WINDOW_SHAPES, HANDMADE, HANDMADE_BY_DIFF, fitsDifficulty, fitSlack, FIT_PANEL,
     DIFF_TARGET, DIFF_MIN_PX, randomFrame,
     insetConvex, ringCells, borderPlan, makeWindow, BORDER_MIN_TARGET,
+    conformCells, curveLeading, bowPoints, segmentsCross, bowFits,
     TAP_MIN_PX, attachSlivers,
     SAVE_VERSION, packWindow, unpackWindow,
   };

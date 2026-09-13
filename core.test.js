@@ -33,6 +33,31 @@ function isConvex(poly) {
   return true;
 }
 
+/* セルの並びが同じか(重心で見る)。
+   並べ替えて突き合わせると、浮動小数の微差で順番が入れ替わることがある。
+   相手のいちばん近い重心を探して、1対1に対応づくかで見る */
+function sameCells(a, b, eps = 1e-6) {
+  const mid = (cells) => cells.map(c => {
+    let cx = 0, cy = 0;
+    for (const p of c) { cx += p[0]; cy += p[1]; }
+    return [cx / c.length, cy / c.length];
+  });
+  const x = mid(a), y = mid(b);
+  if (x.length !== y.length) return false;
+  const used = new Array(y.length).fill(false);
+  for (const p of x) {
+    let best = -1, bestD = Infinity;
+    for (let i = 0; i < y.length; i++) {
+      if (used[i]) continue;
+      const d = Math.hypot(p[0] - y[i][0], p[1] - y[i][1]);
+      if (d < bestD) { bestD = d; best = i; }
+    }
+    if (best < 0 || bestD > eps) return false;
+    used[best] = true;
+  }
+  return true;
+}
+
 const DIFFS = ['easy', 'normal', 'hard', 'vhard'];
 /* スマホの細い画面・大きめの画面・その中間 */
 const PANELS = [[220, 355], [300, 484], [500, 806]];
@@ -170,16 +195,9 @@ test('難易度が上がるほど枚数が増える(目標のまわりに収ま�
 });
 
 test('対称モードは左右対称になる', () => {
-  const key = (cells) => cells.map(c => {
-    let cx = 0, cy = 0;
-    for (const p of c) { cx += p[0]; cy += p[1]; }
-    return `${(cx / c.length).toFixed(6)},${(cy / c.length).toFixed(6)}`;
-  }).sort().join('|');
-
   for (let t = 0; t < 10; t++) {
     const cells = C.randomFrame('normal', 0.62, true, 300, 484);
-    const mirrored = cells.map(c => c.map(p => [1 - p[0], p[1]]));
-    assert.strictEqual(key(cells), key(mirrored), '鏡写しにならない');
+    assert.ok(sameCells(cells, cells.map(c => c.map(p => [1 - p[0], p[1]]))), '鏡写しにならない');
   }
 });
 
@@ -310,15 +328,19 @@ test('縁取りを付けても、窓は隙間なく重なりなく埋まる', ()
       for (let t = 0; t < 4; t++) {
         const cells = C.makeWindow({ diff, shapePoly: poly, symmetric: t % 2 === 0,
                                      panelW: PW, panelH: PH, border: true });
-        /* 外形で切り抜くとき、削りかすのような小片は捨てる。そのぶんの差は許す */
-        assert.ok(Math.abs(sumArea(cells) - shapeArea) < 0.006,
+        assert.ok(Math.abs(sumArea(cells) - shapeArea) < 0.002,
           `${shape.name} ${diff}: 面積が合わない (${sumArea(cells).toFixed(4)} / ${shapeArea.toFixed(4)})`);
         /* 適当な点は、ちょうど1枚に入る */
+        const inset = C.insetConvex(poly, 2, PW, PH);   /* ふち上の点は判定がぶれるので少しだけ内側で見る */
         for (let k = 0; k < 20; k++) {
           const u = Math.random(), v = Math.random();
           if (!C.pointInPoly(u, v, poly)) continue;          /* 窓の外は見ない */
           const hit = cells.filter(c => C.pointInPoly(u, v, c)).length;
-          assert.strictEqual(hit, 1, `${shape.name} ${diff}: (${u.toFixed(3)}, ${v.toFixed(3)}) が ${hit} 枚に入った`);
+          assert.ok(hit <= 1, `${shape.name} ${diff}: (${u.toFixed(3)}, ${v.toFixed(3)}) が ${hit} 枚に重なった`);
+          if (inset && C.pointInPoly(u, v, inset)) {
+            assert.strictEqual(hit, 1,
+              `${shape.name} ${diff}: (${u.toFixed(3)}, ${v.toFixed(3)}) がどのセルにも入らない`);
+          }
         }
       }
     }
@@ -351,6 +373,175 @@ test('縁取りを付けても、枚数が大きく落ちない', () => {
       }
     }
   }
+});
+
+/* ---------- 曲線の鉛線 ---------- */
+
+test('T字をそろえると、内側の辺はすべて2枚で共有される', () => {
+  const at = (p) => `${p[0].toFixed(6)},${p[1].toFixed(6)}`;
+  const edgeKey = (a, b) => (at(a) < at(b) ? at(a) + '|' + at(b) : at(b) + '|' + at(a));
+  const shape = C.WINDOW_SHAPES[0];
+  for (const diff of ['normal', 'vhard']) {
+    const raw = C.makeWindow({ diff, shapePoly: shape.poly(), symmetric: true,
+                               panelW: 325, panelH: 525, border: true });
+    const conformed = C.conformCells(raw, 325, 525);
+    const count = (cells) => {
+      const m = new Map();
+      for (const c of cells) {
+        for (let i = 0; i < c.length; i++) m.set(edgeKey(c[i], c[(i + 1) % c.length]),
+          (m.get(edgeKey(c[i], c[(i + 1) % c.length])) || 0) + 1);
+      }
+      let shared = 0;
+      for (const n of m.values()) if (n >= 2) shared++;
+      return shared / m.size;
+    };
+    assert.ok(count(conformed) > 0.8,
+      `${diff}: そろえた後も共有されている辺が ${(count(conformed) * 100).toFixed(0)}% しかない`);
+    assert.ok(count(conformed) > count(raw), `${diff}: そろえた意味がない`);
+    assert.ok(Math.abs(sumArea(conformed) - sumArea(raw)) < 1e-9, `${diff}: 面積が変わった`);
+  }
+});
+
+test('弧のふくらみは、指定したぶんになる', () => {
+  const a = [0.2, 0.5], b = [0.8, 0.5];
+  const pts = C.bowPoints(a, b, 10, 5, 300, 300);
+  assert.strictEqual(pts.length, 5);
+  const mid = pts[2];                         /* 真ん中の点 */
+  assert.ok(Math.abs(Math.abs(mid[1] - 0.5) * 300 - 10) < 0.6,
+    `ふくらみが 10px にならない (${(Math.abs(mid[1] - 0.5) * 300).toFixed(1)}px)`);
+  /* 反対向きも同じだけふくらむ */
+  const back = C.bowPoints(a, b, -10, 5, 300, 300);
+  assert.ok(Math.abs(back[2][1] - 0.5 + (mid[1] - 0.5)) < 1e-9, '向きで大きさが変わる');
+});
+
+test('鉛線を曲げても、窓は隙間なく重なりなく埋まる', () => {
+  for (const shape of C.WINDOW_SHAPES) {
+    const poly = C.cleanPoly(shape.poly());
+    const [PW, PH] = SHAPE_PANELS(shape);
+    const shapeArea = Math.abs(C.polyArea(poly));
+    for (const diff of ['normal', 'hard', 'vhard']) {
+      for (let t = 0; t < 3; t++) {
+        const cells = C.makeWindow({ diff, shapePoly: poly, symmetric: t % 2 === 0,
+          panelW: PW, panelH: PH, border: t % 2 === 1, curve: true });
+        assert.ok(Math.abs(sumArea(cells) - shapeArea) < 0.002,
+          `${shape.name} ${diff}: 面積が合わない (${sumArea(cells).toFixed(4)})`);
+        /* 重なりも抜けも許さない。窓の中の点は、必ずちょうど1枚に入る */
+        const inset = C.insetConvex(poly, 2, PW, PH);   /* ふち上の点は判定がぶれるので少しだけ内側で見る */
+        for (let k = 0; k < 25; k++) {
+          const u = Math.random(), v = Math.random();
+          if (!C.pointInPoly(u, v, poly)) continue;
+          const hit = cells.filter(c => C.pointInPoly(u, v, c)).length;
+          assert.ok(hit <= 1, `${shape.name} ${diff}: (${u.toFixed(3)}, ${v.toFixed(3)}) が ${hit} 枚に重なった`);
+          if (inset && C.pointInPoly(u, v, inset)) {
+            assert.strictEqual(hit, 1,
+              `${shape.name} ${diff}: (${u.toFixed(3)}, ${v.toFixed(3)}) がどのセルにも入らない`);
+          }
+        }
+      }
+    }
+  }
+});
+
+test('弧を入れても、セルの形が壊れない(自分の辺どうしが交わらない)', () => {
+  /* 細長い三日月のようなセルでは、弧が向かいの辺を突き抜けて重なりが出る。
+     実測: この見張りが無い時、40万点中 83 点が2枚のセルに入っていた */
+  const selfCrosses = (poly) => {
+    for (let i = 0; i < poly.length; i++) {
+      for (let j = i + 2; j < poly.length; j++) {
+        if (i === 0 && j === poly.length - 1) continue;
+        if (C.segmentsCross(poly[i], poly[(i + 1) % poly.length],
+                            poly[j], poly[(j + 1) % poly.length])) return true;
+      }
+    }
+    return false;
+  };
+  for (const shape of C.WINDOW_SHAPES) {
+    const poly = C.cleanPoly(shape.poly());
+    const [PW, PH] = SHAPE_PANELS(shape);
+    for (const diff of ['normal', 'hard', 'vhard']) {
+      for (let t = 0; t < 3; t++) {
+        const cells = C.makeWindow({ diff, shapePoly: poly, symmetric: t % 2 === 0,
+          panelW: PW, panelH: PH, border: t % 2 === 1, curve: true });
+        for (const cell of cells) {
+          assert.ok(!selfCrosses(cell),
+            `${shape.name} ${diff}: 自分の辺どうしが交わるセル (${cell.length}点)`);
+        }
+      }
+    }
+  }
+});
+
+test('向かいの辺を突き抜ける弧は入れない', () => {
+  /* 細長いセル: (0,0)-(1,0)-(1,0.02)-(0,0.02) を横切る弧は入らない */
+  const thin = [[0, 0], [1, 0], [1, 0.02], [0, 0.02]];
+  const deep = C.bowPoints([0, 0], [1, 0], 40, 4, 300, 300);    /* 大きくふくらませる */
+  assert.strictEqual(C.bowFits(thin, 0, deep), false, '突き抜ける弧を通してしまう');
+  const shallow = C.bowPoints([0, 0], [1, 0], -1, 4, 300, 300); /* 外向きに少しだけ */
+  assert.strictEqual(C.bowFits(thin, 0, shallow), true, '入るはずの弧をはじいている');
+});
+
+test('左右対称の窓は、曲げても左右対称のまま', () => {
+  /* 曲げる/曲げないの判断を片側だけで決めると、ここで崩れる */
+  for (const shape of C.WINDOW_SHAPES) {
+    const [PW, PH] = SHAPE_PANELS(shape);
+    for (let t = 0; t < 4; t++) {
+      const cells = C.makeWindow({ diff: 'normal', shapePoly: shape.poly(), symmetric: true,
+        panelW: PW, panelH: PH, border: t % 2 === 0, curve: true });
+      assert.ok(sameCells(cells, cells.map(c => c.map(p => [1 - p[0], p[1]]))),
+        `${shape.name}: 左右対称が崩れた`);
+    }
+  }
+});
+
+test('縁取りの帯は曲げない(まっすぐな縁のまま)', () => {
+  const shape = C.WINDOW_SHAPES[0];
+  const [PW, PH] = SHAPE_PANELS(shape);
+  const plan = C.borderPlan('vhard', PW, PH);
+  const ring = C.ringCells(C.cleanPoly(shape.poly()),
+                           C.insetConvex(C.cleanPoly(shape.poly()), plan.band, PW, PH),
+                           plan.pieceLen, PW, PH);
+  const cells = C.makeWindow({ diff: 'vhard', shapePoly: shape.poly(), symmetric: true,
+    panelW: PW, panelH: PH, border: true, curve: true });
+  /* 帯は先頭に並ぶ。T字をそろえた点が増えるので枚数では見ず、
+     「どの点も元の帯の枠線の上にある」= 曲げられていない、で見る */
+  const distToEdge = (p, a, b) => {
+    const ax = a[0] * PW, ay = a[1] * PH, bx = b[0] * PW, by = b[1] * PH;
+    const px = p[0] * PW, py = p[1] * PH;
+    const ex = bx - ax, ey = by - ay;
+    const len2 = ex * ex + ey * ey || 1;
+    const t = Math.max(0, Math.min(1, ((px - ax) * ex + (py - ay) * ey) / len2));
+    return Math.hypot(px - (ax + ex * t), py - (ay + ey * t));
+  };
+  let off = 0;
+  for (let i = 0; i < ring.length && i < cells.length; i++) {
+    for (const p of cells[i]) {
+      let d = Infinity;
+      for (let k = 0; k < ring[i].length; k++) {
+        d = Math.min(d, distToEdge(p, ring[i][k], ring[i][(k + 1) % ring[i].length]));
+      }
+      if (d > 0.3) off++;
+    }
+  }
+  assert.strictEqual(off, 0, `帯の点が ${off} 個、まっすぐな縁から外れている`);
+});
+
+test('曲げても、押せる大きさのセルが痩せない', () => {
+  /* もともと細いセルの辺は曲げない、という決まりの見張り */
+  const shape = C.WINDOW_SHAPES[0];
+  const [PW, PH] = SHAPE_PANELS(shape);
+  const smallest = (curve) => {
+    let min = Infinity;
+    for (let t = 0; t < 8; t++) {
+      for (const cell of C.makeWindow({ diff: 'vhard', shapePoly: shape.poly(), symmetric: t % 2 === 0,
+        panelW: PW, panelH: PH, border: true, curve })) {
+        min = Math.min(min, Math.abs(C.polyArea(cell)) * PW * PH);
+      }
+    }
+    return min;
+  };
+  const plain = smallest(false), curved = smallest(true);
+  assert.ok(curved > plain * 0.75,
+    `曲げるといちばん小さいセルが ${plain.toFixed(0)}px² → ${curved.toFixed(0)}px² に痩せる`);
 });
 
 /* ---------- 手作り枠 ---------- */
