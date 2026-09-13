@@ -142,6 +142,22 @@
     return [ax, ay];
   }
 
+  /* 同じ場所に並んだ点を落とす。
+     重なった点があると辺の長さが 0 になり、内側へ寄せる計算ができない */
+  function cleanPoly(poly, eps = 1e-9) {
+    const out = [];
+    for (const p of poly) {
+      const q = out[out.length - 1];
+      if (!q || Math.abs(p[0] - q[0]) > eps || Math.abs(p[1] - q[1]) > eps) out.push([p[0], p[1]]);
+    }
+    while (out.length > 3) {
+      const a = out[0], b = out[out.length - 1];
+      if (Math.abs(a[0] - b[0]) > eps || Math.abs(a[1] - b[1]) > eps) break;
+      out.pop();
+    }
+    return out;
+  }
+
   const UNIT_RECT = [[0, 0], [1, 0], [1, 1], [0, 1]];
   const clipToUnit = poly => clipConvex(poly, UNIT_RECT);
 
@@ -283,7 +299,7 @@
         const r = this.ratio;
         const a = 0.5 * r;               /* 半円の付け根の高さ */
         const pts = [[0, 1], [0, a]];
-        for (let i = 0; i <= 16; i++) {
+        for (let i = 1; i <= 16; i++) {   /* i=0 は [0, a] と重なるので飛ばす */
           const th = Math.PI - Math.PI * i / 16;
           pts.push([0.5 + 0.5 * Math.cos(th), a - 0.5 * r * Math.sin(th)]);
         }
@@ -631,6 +647,131 @@
   };
 
   /* ============================================================
+     縁取りの帯
+     ------------------------------------------------------------
+     本物の窓は、たいてい外周に硝子の帯をめぐらせている。それが無いと、
+     どこまで行っても均質なモザイクに見える。
+     外形を画面の上で何 px か内側へ寄せた形を作り、外と内のあいだを
+     辺ごとに細長い硝子へ割る。内側は今までどおりの割り方で埋める。
+     ============================================================ */
+
+  /* 凸多角形を、画面の上で d px ぶん内側へ寄せる。
+     辺の数は変えない(外と内の辺が1対1で対応する)ので、間を帯に割れる。
+     痩せて形が壊れるときは null */
+  function insetConvex(poly, d, panelW, panelH) {
+    const px = poly.map(p => [p[0] * panelW, p[1] * panelH]);
+    let cx = 0, cy = 0;
+    for (const p of px) { cx += p[0]; cy += p[1]; }
+    cx /= px.length; cy /= px.length;
+
+    /* 各辺を、内側へ d だけずらした直線 */
+    const lines = [];
+    for (let i = 0; i < px.length; i++) {
+      const a = px[i], b = px[(i + 1) % px.length];
+      const ex = b[0] - a[0], ey = b[1] - a[1];
+      const len = Math.hypot(ex, ey);
+      if (len < 1e-9) return null;
+      let nx = -ey / len, ny = ex / len;
+      if ((cx - a[0]) * nx + (cy - a[1]) * ny < 0) { nx = -nx; ny = -ny; }   /* 内向きへ */
+      lines.push({ x: a[0] + nx * d, y: a[1] + ny * d, dx: ex / len, dy: ey / len });
+    }
+
+    /* 隣り合う直線の交点が、内側の形の角になる */
+    const out = [];
+    for (let i = 0; i < lines.length; i++) {
+      const p = lines[(i - 1 + lines.length) % lines.length], q = lines[i];
+      const den = p.dx * q.dy - p.dy * q.dx;
+      if (Math.abs(den) < 1e-9) return null;                    /* 平行で角が出せない */
+      const t = ((q.x - p.x) * q.dy - (q.y - p.y) * q.dx) / den;
+      out.push([(p.x + p.dx * t) / panelW, (p.y + p.dy * t) / panelH]);
+    }
+
+    /* 痩せすぎ・ねじれの見張り。おかしければ縁取りをあきらめる */
+    const areaIn = Math.abs(polyArea(out)), areaOut = Math.abs(polyArea(poly));
+    if (!(areaIn > areaOut * 0.25)) return null;
+    for (const p of out) {
+      if (!Number.isFinite(p[0]) || !Number.isFinite(p[1])) return null;
+      if (!pointInPoly(p[0], p[1], poly)) return null;
+    }
+    return out;
+  }
+
+  /* 外と内のあいだを、辺ごとに細長い硝子へ割る */
+  function ringCells(outer, inner, pieceLenPx, panelW, panelH) {
+    const lerp = (a, b, t) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+    const cells = [];
+    for (let i = 0; i < outer.length; i++) {
+      const o0 = outer[i], o1 = outer[(i + 1) % outer.length];
+      const i0 = inner[i], i1 = inner[(i + 1) % inner.length];
+      const len = Math.hypot((o1[0] - o0[0]) * panelW, (o1[1] - o0[1]) * panelH);
+      const k = Math.max(1, Math.round(len / pieceLenPx));
+      for (let j = 0; j < k; j++) {
+        const t0 = j / k, t1 = (j + 1) / k;
+        cells.push([lerp(o0, o1, t0), lerp(o0, o1, t1), lerp(i0, i1, t1), lerp(i0, i1, t0)]);
+      }
+    }
+    return cells;
+  }
+
+  /* 縁取りを付けられる難易度。easy は帯だけで枚数を使い切ってしまう
+     (帯は外周をめぐるので、窓が粗くても枚数は減らない) */
+  const BORDER_MIN_TARGET = 40;
+
+  /* 帯の幅と、帯を割る長さ。どちらも指で押せる大きさを必ず超える。
+     幅は短いほうの辺の1割、割る長さはその3倍。見比べてこの形に決めた
+     (細いと帯に見えず、短く割ると内側に回す枚数が無くなる) */
+  function borderPlan(diffKey, panelW, panelH) {
+    const band = Math.max(TAP_MIN_PX + 2, Math.min(panelW, panelH) * 0.10);
+    return { band, pieceLen: band * 3 };
+  }
+
+  /* ============================================================
+     窓を1枚ぶん作る(縁取り + 内側)。画面を触らないのでここに置ける
+     ============================================================ */
+  function makeWindow(opts) {
+    const { diff, symmetric, panelW, panelH } = opts;
+    const shapePoly = cleanPoly(opts.shapePoly);
+    const target = DIFF_TARGET[diff];
+    const withBorder = opts.border && target >= BORDER_MIN_TARGET;
+
+    const build = (border) => {
+      const cells = [];
+      let inner = shapePoly;
+      if (border) {
+        const plan = borderPlan(diff, panelW, panelH);
+        const ins = insetConvex(shapePoly, plan.band, panelW, panelH);
+        if (ins) {
+          cells.push(...ringCells(shapePoly, ins, plan.pieceLen, panelW, panelH));
+          inner = ins;
+        }
+      }
+      /* 内側は、その形の外接四角のなかで割ってから、形で切り抜く */
+      let u0 = 1, v0 = 1, u1 = 0, v1 = 0;
+      for (const p of inner) {
+        u0 = Math.min(u0, p[0]); u1 = Math.max(u1, p[0]);
+        v0 = Math.min(v0, p[1]); v1 = Math.max(v1, p[1]);
+      }
+      const w = (u1 - u0) * panelW, h = (v1 - v0) * panelH;
+      const raw = randomFrame(diff, w / h, symmetric, w, h, Math.max(4, target - cells.length));
+      for (const poly of raw) {
+        const mapped = poly.map(p => [u0 + p[0] * (u1 - u0), v0 + p[1] * (v1 - v0)]);
+        const c = clipConvex(mapped, inner);
+        if (c) cells.push(c);
+      }
+      return cells;
+    };
+
+    const cells = build(withBorder);
+    if (!withBorder || cells.length >= target * 0.8) return cells;
+
+    /* 小さい画面の四角窓・丸窓では、帯が面積を食って枚数が落ちる。
+       そういう時は帯をあきらめ、目標に近いほうを採る
+       (同じ難易度なら同じ手応え、を枚数で守る) */
+    const plain = build(false);
+    return Math.abs(plain.length - target) < Math.abs(cells.length - target) ? plain : cells;
+  }
+
+  /* ============================================================
      ランダム枠:目標枚数まで、いちばん大きい区画から割っていく
      ・symmetric=true  … 左半分だけ作って鏡写し(建具らしい端正さ)
      ・symmetric=false … 全面を直接分割(自由で崩れた表情)
@@ -640,9 +781,10 @@
   const DIFF_TARGET = { easy: 10, normal: 40, hard: 80, vhard: 140 };
   const DIFF_MIN_PX = { easy: 26, normal: 26, hard: 22, vhard: 19 };
 
-  function randomFrame(diffKey, ratio, symmetric, panelW, panelH) {
+  function randomFrame(diffKey, ratio, symmetric, panelW, panelH, want) {
     const domainW = symmetric ? 0.5 : 1;                        /* 分割する領域の幅 */
-    const target = DIFF_TARGET[diffKey] * (symmetric ? 0.5 : 1); /* この領域での目標 */
+    const goal = Number.isFinite(want) ? Math.max(2, want) : DIFF_TARGET[diffKey];
+    const target = goal * (symmetric ? 0.5 : 1);                 /* この領域での目標 */
 
     /* 絶対最小サイズを単位座標に換算。どの難易度でも、
        これより小さいセルは生まれない(押しやすさ優先で目標より減ることはある) */
@@ -719,9 +861,10 @@
 
   return {
     COLOR_FAMILIES, relLuminance,
-    rectCell, diamondSplit, gridCells, polyArea, clipConvex, clipToUnit, UNIT_RECT, pointInPoly, insidePoint,
+    rectCell, diamondSplit, gridCells, polyArea, clipConvex, clipToUnit, UNIT_RECT, pointInPoly, insidePoint, cleanPoly,
     WINDOW_SHAPES, HANDMADE, HANDMADE_BY_DIFF, fitsDifficulty, fitSlack, FIT_PANEL,
     DIFF_TARGET, DIFF_MIN_PX, randomFrame,
+    insetConvex, ringCells, borderPlan, makeWindow, BORDER_MIN_TARGET,
     TAP_MIN_PX, attachSlivers,
     SAVE_VERSION, packWindow, unpackWindow,
   };

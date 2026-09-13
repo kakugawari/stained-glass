@@ -241,6 +241,118 @@ test('押せる大きさのセルは、自分で自分の持ち主になる(勝�
   assert.deepStrictEqual(host, cells.map((_, i) => i));
 });
 
+/* ---------- 縁取りの帯 ---------- */
+
+test('重なった点は落とす(外形にひとつ紛れていた)', () => {
+  assert.deepStrictEqual(C.cleanPoly([[0, 0], [1, 0], [1, 0], [1, 1], [0, 0]]),
+                         [[0, 0], [1, 0], [1, 1]]);
+  for (const shape of C.WINDOW_SHAPES) {
+    const clean = C.cleanPoly(shape.poly());
+    for (let i = 0; i < clean.length; i++) {
+      const a = clean[i], b = clean[(i + 1) % clean.length];
+      assert.ok(Math.hypot(a[0] - b[0], a[1] - b[1]) > 1e-9, `${shape.name}: 同じ点が並んでいる`);
+    }
+  }
+});
+
+
+const SHAPE_PANELS = (shape, PW = 300) => {
+  const w = shape.ratio >= 1 ? Math.min(PW, 480) : PW;
+  return [w, w / shape.ratio];
+};
+
+test('内側へ寄せた形は、外形の中にきちんと収まる', () => {
+  for (const shape of C.WINDOW_SHAPES) {
+    const poly = C.cleanPoly(shape.poly());   /* 重なった点があると辺の長さが 0 になる */
+    const [PW, PH] = SHAPE_PANELS(shape);
+    const inner = C.insetConvex(poly, 24, PW, PH);
+    assert.ok(inner, `${shape.name}: 内側の形が作れない`);
+    assert.strictEqual(inner.length, poly.length, `${shape.name}: 辺の数が変わった`);
+    for (const p of inner) {
+      assert.ok(C.pointInPoly(p[0], p[1], poly), `${shape.name}: 内側の角が外形からはみ出した`);
+    }
+    assert.ok(Math.abs(C.polyArea(inner)) < Math.abs(C.polyArea(poly)), `${shape.name}: 小さくなっていない`);
+  }
+});
+
+test('太らせすぎたら、縁取りをあきらめる(null を返す)', () => {
+  const shape = C.WINDOW_SHAPES[0];
+  const [PW, PH] = SHAPE_PANELS(shape);
+  assert.strictEqual(C.insetConvex(C.cleanPoly(shape.poly()), PW, PW, PH), null,
+    '窓が消えるほどの幅でも作ってしまう');
+});
+
+test('帯は外周をひとまわりし、外と内のあいだを埋める', () => {
+  for (const shape of C.WINDOW_SHAPES) {
+    const poly = C.cleanPoly(shape.poly());
+    const [PW, PH] = SHAPE_PANELS(shape);
+    const plan = C.borderPlan('normal', PW, PH);
+    const inner = C.insetConvex(poly, plan.band, PW, PH);
+    const ring = C.ringCells(poly, inner, plan.pieceLen, PW, PH);
+    const gap = Math.abs(C.polyArea(poly)) - Math.abs(C.polyArea(inner));
+    assert.ok(Math.abs(sumArea(ring) - gap) < 1e-9,
+      `${shape.name}: 帯の面積が合わない (${sumArea(ring).toFixed(4)} / ${gap.toFixed(4)})`);
+    for (const cell of ring) {
+      const b = bbox(cell);
+      const w = (b.u1 - b.u0) * PW, h = (b.v1 - b.v0) * PH;
+      assert.ok(Math.min(w, h) >= C.TAP_MIN_PX,
+        `${shape.name}: 帯に ${Math.min(w, h).toFixed(1)}px のセルがある`);
+    }
+  }
+});
+
+test('縁取りを付けても、窓は隙間なく重なりなく埋まる', () => {
+  for (const shape of C.WINDOW_SHAPES) {
+    const poly = shape.poly();
+    const [PW, PH] = SHAPE_PANELS(shape);
+    const shapeArea = Math.abs(C.polyArea(poly));
+    for (const diff of DIFFS) {
+      for (let t = 0; t < 4; t++) {
+        const cells = C.makeWindow({ diff, shapePoly: poly, symmetric: t % 2 === 0,
+                                     panelW: PW, panelH: PH, border: true });
+        /* 外形で切り抜くとき、削りかすのような小片は捨てる。そのぶんの差は許す */
+        assert.ok(Math.abs(sumArea(cells) - shapeArea) < 0.006,
+          `${shape.name} ${diff}: 面積が合わない (${sumArea(cells).toFixed(4)} / ${shapeArea.toFixed(4)})`);
+        /* 適当な点は、ちょうど1枚に入る */
+        for (let k = 0; k < 20; k++) {
+          const u = Math.random(), v = Math.random();
+          if (!C.pointInPoly(u, v, poly)) continue;          /* 窓の外は見ない */
+          const hit = cells.filter(c => C.pointInPoly(u, v, c)).length;
+          assert.strictEqual(hit, 1, `${shape.name} ${diff}: (${u.toFixed(3)}, ${v.toFixed(3)}) が ${hit} 枚に入った`);
+        }
+      }
+    }
+  }
+});
+
+test('easy には縁取りを付けない(帯だけで枚数を使い切ってしまう)', () => {
+  const shape = C.WINDOW_SHAPES[0];
+  const [PW, PH] = SHAPE_PANELS(shape);
+  assert.ok(C.DIFF_TARGET.easy < C.BORDER_MIN_TARGET);
+  for (let t = 0; t < 6; t++) {
+    const withB = C.makeWindow({ diff: 'easy', shapePoly: shape.poly(), symmetric: true,
+                                 panelW: PW, panelH: PH, border: true }).length;
+    assert.ok(withB <= C.DIFF_TARGET.easy * 1.3 + 6, `easy が ${withB} 枚になった`);
+  }
+});
+
+test('縁取りを付けても、枚数が大きく落ちない', () => {
+  /* 小さい画面の四角窓・丸窓では帯が面積を食う。落ちるなら帯をあきらめる決まり */
+  for (const [PW, PH] of [[256, 414], [300, 484]]) {
+    for (const shape of C.WINDOW_SHAPES) {
+      const w = shape.ratio >= 1 ? Math.min(PW, PH) : PW, h = w / shape.ratio;
+      for (const diff of ['normal', 'hard', 'vhard']) {
+        const make = (border) => C.makeWindow({ diff, shapePoly: shape.poly(), symmetric: true,
+                                                panelW: w, panelH: h, border }).length;
+        const plain = Math.max(make(false), make(false));
+        const bordered = Math.max(make(true), make(true));
+        assert.ok(bordered >= plain * 0.8,
+          `${shape.name} ${diff} ${PW}x${PH}: 縁なし ${plain} 枚 → 縁あり ${bordered} 枚 は落ちすぎ`);
+      }
+    }
+  }
+});
+
 /* ---------- 手作り枠 ---------- */
 
 test('手作り枠10種は、どの細かさでも窓を埋め尽くす', () => {

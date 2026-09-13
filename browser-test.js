@@ -336,7 +336,12 @@ async function run() {
       const floor = target * 0.6, ceil = target * 1.3 + 6;
       ok(lo >= floor && hi <= ceil,
         `${key}: 12回引いても ${lo}〜${hi} 回で収まる (目安 ${Math.round(floor)}〜${Math.round(ceil)})`);
-      ok(hi / lo <= 2, `${key}: いちばん多い窓といちばん少ない窓の差が 2 倍以内 (${(hi / lo).toFixed(1)} 倍)`);
+      // easy は枚数が少ないので、比で見ると1枚の差が大きく響く。枚数の差で見る
+      if (target < 20) {
+        ok(hi - lo <= 10, `${key}: いちばん多い窓と少ない窓の差が ${hi - lo} 枚 (10枚まで)`);
+      } else {
+        ok(hi / lo <= 2, `${key}: いちばん多い窓と少ない窓の差が 2 倍以内 (${(hi / lo).toFixed(1)} 倍)`);
+      }
     }
 
     // ------------------------------------------------ 埋めきる

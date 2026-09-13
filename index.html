@@ -173,9 +173,12 @@
    ここでは名前を借りて、描画・音・操作に専念する */
 const {
   COLOR_FAMILIES, clipConvex, UNIT_RECT, pointInPoly, insidePoint, attachSlivers,
-  WINDOW_SHAPES, HANDMADE, HANDMADE_BY_DIFF, randomFrame, DIFF_TARGET, relLuminance,
+  WINDOW_SHAPES, HANDMADE, HANDMADE_BY_DIFF, makeWindow, DIFF_TARGET, relLuminance,
   packWindow, unpackWindow,
 } = window.Core;
+
+/* 縁取りの帯をめぐらせる割合(たまに縁のない窓も出す) */
+const BORDER_CHANCE = 0.7;
 
 /* 塗りかけの窓のしまい場所。開き直したら続きから */
 const SAVE_KEY = "stained-glass:window";
@@ -333,18 +336,18 @@ function newWindow(diffKey) {
     curHandmade = hm.name;
     showFrameName(hm.name);
   } else {
-    /* ランダム枠:外形を抽選して左右対称生成、外形で切り抜く */
+    /* ランダム枠:外形を抽選し、縁取りの帯をめぐらせて、内側を割る */
     const shape = WINDOW_SHAPES[(Math.random() * WINDOW_SHAPES.length) | 0];
     panelRatio = shape.ratio;
     shapePoly = shape.poly();
     layoutPanel();
-    const raw = randomFrame(diffKey, shape.ratio, Math.random() < 0.5, PW, PH);   /* 対称/非対称は半々 */
-    cells = [];
-    for (const poly of raw) {
-      const clipped = shape.key === "rect" || shape.key === "square"
-        ? poly : clipConvex(poly, shapePoly);
-      if (clipped) cells.push(clipped);
-    }
+    cells = makeWindow({
+      diff: diffKey,
+      shapePoly,
+      symmetric: Math.random() < 0.5,     /* 対称/非対称は半々 */
+      panelW: PW, panelH: PH,
+      border: Math.random() < BORDER_CHANCE,
+    });
     curShape = shape.key;
     curHandmade = null;
     showFrameName(shape.name);
@@ -947,6 +950,14 @@ window.__app = {
     return { x: ux(mid[0]), y: vy(mid[1]) };
   },
   newWindow,
+  /* 見比べ用: 決まった枠をそのまま出す */
+  setWindow: (list, shape, diff) => {
+    curDiff = diff; curShape = shape.key; curHandmade = null;
+    panelRatio = shape.ratio; shapePoly = shape.poly(); layoutPanel();
+    cells = list; fills = new Array(cells.length).fill(null);
+    refreshHosts(); completed = false; completeGlow = 0; glints.length = 0;
+    updateRemain(); redrawGlass();
+  },
   tapCell,
   paintAlong,
   saveKey: SAVE_KEY,
