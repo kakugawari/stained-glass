@@ -154,6 +154,77 @@ async function run() {
     });
     ok(overlap <= 0, `操作帯が窓にかぶらない (すき間 ${-overlap}px)`);
 
+    // ------------------------------------------------ なぞって塗る
+    section('なぞって塗る');
+    await phone.locator('#btn-normal').tap();
+    await phone.waitForTimeout(120);
+
+    // 窓を横切ってなぞると、通った道が塗れる
+    const swipe = await phone.evaluate(async () => {
+      const cv = document.getElementById('cv');
+      const p = window.__app.state().panel;
+      const y = p.y + p.h * 0.5;
+      const fire = (type, x, yy) =>
+        cv.dispatchEvent(new PointerEvent(type, { clientX: x, clientY: yy, bubbles: true }));
+      fire('pointerdown', p.x + 4, y);
+      for (let i = 1; i <= 10; i++) {
+        fire('pointermove', p.x + 4 + (p.w - 8) * i / 10, y);
+        await new Promise((r) => setTimeout(r, 12));
+      }
+      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 60));
+      const s = window.__app.state();
+      return { filled: s.fills.filter((f) => f !== null).length, fills: s.fills.slice(),
+               sweeping: window.__app.sweeping() };
+    });
+    ok(swipe.filled >= 4, `なぞった道すじが塗れる (${swipe.filled} 枚)`);
+    ok(!swipe.sweeping, '窓の中から始めたなぞりでは、光のはらいにならない');
+
+    // 塗った上をもう一度なぞっても、塗り替わらない(うっかり指がすべっても壊れない)
+    const again = await phone.evaluate(async (beforeFills) => {
+      const cv = document.getElementById('cv');
+      const p = window.__app.state().panel;
+      const y = p.y + p.h * 0.5;
+      const fire = (type, x, yy) =>
+        cv.dispatchEvent(new PointerEvent(type, { clientX: x, clientY: yy, bubbles: true }));
+      /* 押した所は「押した」扱いで塗り替わるので、少し内側から始める */
+      fire('pointerdown', p.x + p.w * 0.45, y);
+      for (let i = 1; i <= 6; i++) {
+        fire('pointermove', p.x + p.w * (0.45 + 0.5 * i / 6), y);
+        await new Promise((r) => setTimeout(r, 12));
+      }
+      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 60));
+      const now = window.__app.state().fills;
+      let changed = 0;
+      for (let i = 0; i < now.length; i++) {
+        if (beforeFills[i] !== null && now[i] !== beforeFills[i]) changed++;
+      }
+      return changed;
+    }, swipe.fills);
+    ok(again <= 1, `なぞっても、塗ってある硝子は替えない (替わったのは ${again} 枚。押し始めの1枚まで)`);
+
+    // 窓の外から速くはらうと、光だけ走って 1 枚も塗れない
+    const flick = await phone.evaluate(async () => {
+      const cv = document.getElementById('cv');
+      const p = window.__app.state().panel;
+      const y = p.y + p.h * 0.4;
+      const before = window.__app.state().fills.filter((f) => f !== null).length;
+      const fire = (type, x, yy) =>
+        cv.dispatchEvent(new PointerEvent(type, { clientX: x, clientY: yy, bubbles: true }));
+      fire('pointerdown', p.x - 40, y);
+      for (let i = 1; i <= 8; i++) {
+        fire('pointermove', p.x - 40 + (p.w + 80) * i / 8, y);
+        await new Promise((r) => setTimeout(r, 4));   /* 指より速いくらい */
+      }
+      window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
+      await new Promise((r) => setTimeout(r, 40));
+      return { sweeping: window.__app.sweeping(),
+               added: window.__app.state().fills.filter((f) => f !== null).length - before };
+    });
+    ok(flick.sweeping, '窓の外から速くはらうと、光の帯が走る');
+    ok(flick.added === 0, 'そのはらいでは硝子が 1 枚も嵌まらない');
+
     // ------------------------------------------------ 塗りかけが消えない
     section('塗りかけが消えない');
 

@@ -543,8 +543,13 @@ function pealBells() {
    ============================================================ */
 const TING_NOTES = [1568.0, 1760.0, 2093.0, 2349.3, 2637.0];  /* G6 A6 C7 D7 E7 */
 
+let lastTing = 0;
 function glassTing() {
   if (!audio) return;
+  /* なぞると一度に何枚も嵌まる。重ねすぎると濁るので、鳴らす間隔に下限を置く */
+  const now = performance.now();
+  if (now - lastTing < 55) return;
+  lastTing = now;
   const t = audio.currentTime;
   const base = TING_NOTES[(Math.random() * TING_NOTES.length) | 0];
   const vol = 0.055 + Math.random() * 0.02;   /* 音量もわずかに揺らす */
@@ -573,7 +578,7 @@ function glassTing() {
 /* ============================================================
    入力:セルをタップして色を灯す。はらうと光の帯
    ============================================================ */
-const pointer = { down: false };
+const pointer = { down: false, painting: false, x: 0, y: 0 };
 
 const trail = [];
 const FLICK_SPEED = 2200;
@@ -584,51 +589,104 @@ function pushTrail(x, y) {
 }
 let lightSweep = null;
 
-function tapCell(x, y) {
+/* 指の下にあるセルの番号。窓の外なら -1 */
+function cellAt(x, y) {
   const u = (x - PX) / PW, v = (y - PY) / PH;
-  if (u < 0 || u > 1 || v < 0 || v > 1) return;
+  if (u < 0 || u > 1 || v < 0 || v > 1) return -1;
   for (let i = 0; i < cells.length; i++) {
-    if (pointInPoly(u, v, cells[i])) {
-      /* 押せない細いかけらに当たったら、その持ち主を嵌める */
-      const h = hosts[i];
-      /* 未記入なら嵌める。既に有れば必ず違う色味に差し替える */
-      let c;
-      do { c = pickShade(); } while (c === fills[h]);
-      for (let k = 0; k < cells.length; k++) {
-        if (hosts[k] === h) fills[k] = c;   /* 持ち主と連れは同じ硝子 */
-      }
-      redrawGlass();
-      glassTing();
-      glints.push({ idx: h, t: 0, dur: 0.5 });
-      updateRemain();
-      if (!completed && fills.every(f => f !== null)) {
-        completed = true;
-        pealBells();
-        saveNow();
-      } else {
-        saveSoon();
-      }
-      return;
-    }
+    if (pointInPoly(u, v, cells[i])) return i;
   }
+  return -1;
+}
+
+/* 持ち主と、その連れに硝子を嵌める。
+   defer=true なら描き直しは呼び手に任せる(なぞりで何枚も嵌める時用) */
+function fillGroup(h, defer) {
+  /* 未記入なら嵌める。既に有れば必ず違う色味に差し替える */
+  let c;
+  do { c = pickShade(); } while (c === fills[h]);
+  for (let k = 0; k < cells.length; k++) {
+    if (hosts[k] === h) fills[k] = c;   /* 持ち主と連れは同じ硝子 */
+  }
+  if (!defer) redrawGlass();
+  glassTing();
+  glints.push({ idx: h, t: 0, dur: 0.5 });
+  updateRemain();
+  if (!completed && fills.every(f => f !== null)) {
+    completed = true;
+    pealBells();
+    saveNow();
+  } else {
+    saveSoon();
+  }
+}
+
+/* 押す:空いていれば嵌める。嵌まっていれば色味を差し替える */
+function tapCell(x, y) {
+  const i = cellAt(x, y);
+  if (i >= 0) fillGroup(hosts[i]);
+}
+
+/* ============================================================
+   なぞり塗り
+   ------------------------------------------------------------
+   ・ひと続きのなぞりで、同じセルは一度だけ
+   ・空いているセルだけ嵌める。すでに嵌まっている物は塗り替えない
+     (うっかり指をすべらせても、塗った物は壊れない。塗り替えは押して行う)
+   ・指の動きは飛び飛びで届くので、前の点との間を細かく埋めて拾う
+   ============================================================ */
+const strokeDone = new Set();   /* このなぞりで、もう触ったセルの持ち主 */
+
+function paintAt(x, y) {
+  const i = cellAt(x, y);
+  if (i < 0) return false;
+  const h = hosts[i];
+  if (strokeDone.has(h)) return false;
+  strokeDone.add(h);
+  if (fills[h] !== null) return false;
+  fillGroup(h, true);   /* 描き直しは、なぞり終わりにまとめて一度 */
+  return true;
+}
+
+function paintAlong(x0, y0, x1, y1) {
+  const dist = Math.hypot(x1 - x0, y1 - y0);
+  const steps = Math.max(1, Math.ceil(dist / 6));   /* 6px ごとに拾う */
+  let painted = false;
+  for (let s = 1; s <= steps; s++) {
+    if (paintAt(x0 + (x1 - x0) * s / steps, y0 + (y1 - y0) * s / steps)) painted = true;
+  }
+  if (painted) redrawGlass();   /* 一度にまとめて描き直す */
+  return painted;
 }
 
 cv.addEventListener("pointerdown", e => {
   e.preventDefault();
   ensureAudio();
   pointer.down = true;
+  /* 窓の中から始めたら「なぞり塗り」。外(暗がり)から始めたら「光のはらい」。
+     こうしないと、光を出そうとするたびに硝子が 1 枚嵌まってしまう */
+  pointer.painting = cellAt(e.clientX, e.clientY) >= 0;
+  pointer.x = e.clientX; pointer.y = e.clientY;
+  strokeDone.clear();
   trail.length = 0;
   pushTrail(e.clientX, e.clientY);
-  tapCell(e.clientX, e.clientY);
+  if (pointer.painting) {
+    const i = cellAt(e.clientX, e.clientY);
+    strokeDone.add(hosts[i]);
+    fillGroup(hosts[i]);
+  }
 });
 cv.addEventListener("pointermove", e => {
   e.preventDefault();
   if (!pointer.down) return;
   pushTrail(e.clientX, e.clientY);
+  if (pointer.painting) paintAlong(pointer.x, pointer.y, e.clientX, e.clientY);
+  pointer.x = e.clientX; pointer.y = e.clientY;
 });
 function onUp() {
   if (!pointer.down) return;
   pointer.down = false;
+  strokeDone.clear();
   if (trail.length >= 2) {
     const a = trail[0], b = trail[trail.length - 1];
     const dtms = b.t - a.t;
@@ -636,7 +694,10 @@ function onUp() {
       const vx = (b.x - a.x) / dtms * 1000;
       const vy2 = (b.y - a.y) / dtms * 1000;
       const sp = Math.hypot(vx, vy2);
-      if (sp >= FLICK_SPEED) lightSweep = { t: 0, dx: vx / sp, dy: vy2 / sp };
+      /* はらいの光は、窓の外から始めた時だけ(塗りと取り合わない) */
+      if (sp >= FLICK_SPEED && !pointer.painting) {
+        lightSweep = { t: 0, dx: vx / sp, dy: vy2 / sp };
+      }
     }
   }
   trail.length = 0;
@@ -848,7 +909,9 @@ window.__app = {
   },
   newWindow,
   tapCell,
+  paintAlong,
   saveKey: SAVE_KEY,
+  sweeping: () => lightSweep !== null,
   asking: () => !document.getElementById("ask").hidden,
   /* 音を鳴らさずに全部埋める(完成時の見た目だけ確かめたい時) */
   fillAll: () => {
