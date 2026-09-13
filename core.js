@@ -288,172 +288,310 @@
 
   /* ============================================================
      手作りの幾何学枠 10種(外形は縦長で固定)
+     ------------------------------------------------------------
+     どの枠も、難易度の目標枚数を受け取って細かさを変える。
+     同じ normal を選んだのに 12 枚の窓と 48 枚の窓が出ると、
+     同じつもりで選んだ遊ぶ側には、まるで別物の手応えになる。
+     枠ごとに細かさを何通りか作ってみて、目標にいちばん近いものを選ぶ
+     (数えるのは実際に作った枚数なので、式を間違えてもずれない)。
      ============================================================ */
+  const PANEL_R = 0.62;   /* 手作り枠の窓は縦長で固定。1枚を正方形に近づける時に使う */
+
+  /* 細かさを振った候補の中から、枚数が目標にいちばん近いものを選ぶ */
+  function closestTo(target, from, to, make) {
+    /* 目標を渡し忘れても、normal の細かさで作る(枠が出ないより良い) */
+    const goal = Number.isFinite(target) ? target : DIFF_TARGET.normal;
+    let best = null, bestErr = Infinity;
+    for (let n = from; n <= to; n++) {
+      const cells = make(n);
+      const err = Math.abs(cells.length - goal);
+      if (err < bestErr) { bestErr = err; best = cells; }
+    }
+    return best;
+  }
+
+  /* 縦 n 段に対する横の列数(画面上で1枚が正方形に近くなる) */
+  const colsFor = (n, min = 2) => Math.max(min, Math.round(n * PANEL_R));
+  const rowsFor = (n, min = 2) => Math.max(min, Math.round(n / PANEL_R));
+  const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, n));
+
+  /* 帯を n 等分した切れ目 */
+  const cuts = (a, b, n) => {
+    const out = [];
+    for (let i = 0; i <= n; i++) out.push(a + (b - a) * i / n);
+    return out;
+  };
+
   const HANDMADE = [
 
-    { name: "Checker", build() {
-        return gridCells(4, 7);
+    { name: "Checker", build(target) {
+        return closestTo(target, 1, 22, (n) => gridCells(colsFor(n), n));
       } },
 
-    { name: "Grand Diamond", build() {
-        const b = 0.13, cells = [];
-        cells.push(rectCell(0, 0, b, b), rectCell(1 - b, 0, 1, b),
-                   rectCell(0, 1 - b, b, 1), rectCell(1 - b, 1 - b, 1, 1));
-        cells.push(rectCell(b, 0, 0.5, b), rectCell(0.5, 0, 1 - b, b));
-        cells.push(rectCell(b, 1 - b, 0.5, 1), rectCell(0.5, 1 - b, 1 - b, 1));
-        cells.push(rectCell(0, b, b, 0.5), rectCell(0, 0.5, b, 1 - b));
-        cells.push(rectCell(1 - b, b, 1, 0.5), rectCell(1 - b, 0.5, 1, 1 - b));
-        cells.push(...diamondSplit(b, b, 1 - b, 1 - b));
-        return cells;
-      } },
-
-    { name: "Three Diamonds", build() {
-        const s = 0.16, cells = [];
-        for (let j = 0; j < 3; j++) {
-          cells.push(...diamondSplit(s, j / 3, 1 - s, (j + 1) / 3));
-        }
-        for (let j = 0; j < 4; j++) {
-          cells.push(rectCell(0, j / 4, s, (j + 1) / 4));
-          cells.push(rectCell(1 - s, j / 4, 1, (j + 1) / 4));
-        }
-        return cells;
-      } },
-
-    { name: "Sunburst", build() {
-        const cells = [];
-        const ox = 0.5, oy = 1.0;
-        const N = 6;
-        const bands = [0, 0.5, 0.95, 2.2];
-        const AR = 0.62;
-        const pt = (a, r) => [ox + Math.cos(a) * r, oy + Math.sin(a) * r * AR];
-        for (let k = 0; k < N; k++) {
-          const a0 = Math.PI + Math.PI * k / N;
-          const a1 = Math.PI + Math.PI * (k + 1) / N;
-          for (let bi = 0; bi < bands.length - 1; bi++) {
-            const r0 = bands[bi], r1 = bands[bi + 1];
-            const poly = [];
-            for (let i = 0; i <= 3; i++) poly.push(pt(a0 + (a1 - a0) * i / 3, r1));
-            if (r0 === 0) poly.push([ox, oy]);
-            else for (let i = 3; i >= 0; i--) poly.push(pt(a0 + (a1 - a0) * i / 3, r0));
-            const clipped = clipToUnit(poly);
-            if (clipped) cells.push(clipped);
-          }
-        }
-        return cells;
-      } },
-
-    { name: "Columns", build() {
-        const cols = 5, cells = [];
-        for (let i = 0; i < cols; i++) {
-          const cuts = i % 2 === 0 ? [0, 0.3, 0.7, 1] : [0, 0.5, 1];
-          for (let j = 0; j < cuts.length - 1; j++) {
-            cells.push(rectCell(i / cols, cuts[j], (i + 1) / cols, cuts[j + 1]));
-          }
-        }
-        return cells;
-      } },
-
-    { name: "Brickwork", build() {
-        const rows = 7, cols = 3, cells = [];
-        for (let j = 0; j < rows; j++) {
-          const off = (j % 2) * 0.5 / cols;
-          if (off > 0) cells.push(rectCell(0, j / rows, off, (j + 1) / rows));
+    { name: "Grand Diamond", build(target) {
+        /* 縁取りの中に大きな菱形。細かい時は菱形をいくつも並べる */
+        const make = (rows) => {
+          const cols = colsFor(rows, 1);
+          const b = Math.min(0.13, 0.42 / (rows + 1));
+          const u = cuts(b, 1 - b, cols), v = cuts(b, 1 - b, rows);
+          const cells = [
+            rectCell(0, 0, b, b), rectCell(1 - b, 0, 1, b),
+            rectCell(0, 1 - b, b, 1), rectCell(1 - b, 1 - b, 1, 1),
+          ];
           for (let i = 0; i < cols; i++) {
-            const u0 = off + i / cols;
-            if (u0 >= 1) break;
-            cells.push(rectCell(u0, j / rows, Math.min(u0 + 1 / cols, 1), (j + 1) / rows));
+            cells.push(rectCell(u[i], 0, u[i + 1], b), rectCell(u[i], 1 - b, u[i + 1], 1));
           }
-        }
-        return cells;
-      } },
-
-    { name: "Door Panel", build() {
-        const b = 0.15, cells = [];
-        cells.push(rectCell(0, 0, b, b), rectCell(1 - b, 0, 1, b),
-                   rectCell(0, 1 - b, b, 1), rectCell(1 - b, 1 - b, 1, 1));
-        cells.push(rectCell(b, 0, 1 - b, b), rectCell(b, 1 - b, 1 - b, 1));
-        cells.push(rectCell(0, b, b, 1 - b), rectCell(1 - b, b, 1, 1 - b));
-        cells.push(rectCell(b, b, 0.5, 0.45), rectCell(0.5, b, 1 - b, 0.45));
-        cells.push(...diamondSplit(b, 0.45, 1 - b, 1 - b));
-        return cells;
-      } },
-
-    { name: "Diamond Lattice", build() {
-        const cols = 3, rows = 5, cells = [];
-        const du = 1 / cols, dv = 1 / rows;
-        for (let j = 0; j <= rows; j++) {
-          for (let i = 0; i <= cols; i++) {
-            if ((i + j) % 2 !== 0) continue;
-            const cx = i * du, cy = j * dv;
-            const poly = [[cx, cy - dv], [cx + du, cy], [cx, cy + dv], [cx - du, cy]];
-            const clipped = clipToUnit(poly);
-            if (clipped) cells.push(clipped);
+          for (let j = 0; j < rows; j++) {
+            cells.push(rectCell(0, v[j], b, v[j + 1]), rectCell(1 - b, v[j], 1, v[j + 1]));
           }
-        }
-        return cells;
+          for (let j = 0; j < rows; j++) {
+            for (let i = 0; i < cols; i++) {
+              cells.push(...diamondSplit(u[i], v[j], u[i + 1], v[j + 1]));
+            }
+          }
+          return cells;
+        };
+        return closestTo(target, 1, 8, make);
       } },
 
-    { name: "Wheel Window", build() {
+    { name: "Three Diamonds", build(target) {
+        /* 両脇に細い帯、その内側に菱形を並べる */
+        const make = (rows) => {
+          const cols = colsFor(rows, 1);
+          const s = Math.min(0.16, 0.42 / (rows + 1));
+          const u = cuts(s, 1 - s, cols), v = cuts(0, 1, rows);
+          const cells = [];
+          for (let j = 0; j < rows; j++) {
+            for (let i = 0; i < cols; i++) {
+              cells.push(...diamondSplit(u[i], v[j], u[i + 1], v[j + 1]));
+            }
+          }
+          const side = rows + 1;
+          for (let j = 0; j < side; j++) {
+            cells.push(rectCell(0, j / side, s, (j + 1) / side));
+            cells.push(rectCell(1 - s, j / side, 1, (j + 1) / side));
+          }
+          return cells;
+        };
+        return closestTo(target, 1, 8, make);
+      } },
+
+    { name: "Sunburst", build(target) {
+        /* 窓の下辺を中心に、扇が広がる */
+        const make = (n) => {
+          const N = Math.max(3, n);
+          const R = clamp(Math.round(n / 2.5), 2, 5);
+          const ox = 0.5, oy = 1.0, AR = 0.62;
+          const bands = [0];
+          for (let r = 1; r <= R; r++) {
+            bands.push(0.5 * Math.pow(2.2 / 0.5, (r - 1) / Math.max(1, R - 1)));
+          }
+          const pt = (a, r) => [ox + Math.cos(a) * r, oy + Math.sin(a) * r * AR];
+          const cells = [];
+          for (let k = 0; k < N; k++) {
+            const a0 = Math.PI + Math.PI * k / N;
+            const a1 = Math.PI + Math.PI * (k + 1) / N;
+            for (let bi = 0; bi < bands.length - 1; bi++) {
+              const r0 = bands[bi], r1 = bands[bi + 1];
+              const poly = [];
+              for (let i = 0; i <= 3; i++) poly.push(pt(a0 + (a1 - a0) * i / 3, r1));
+              if (r0 === 0) poly.push([ox, oy]);
+              else for (let i = 3; i >= 0; i--) poly.push(pt(a0 + (a1 - a0) * i / 3, r0));
+              const clipped = clipToUnit(poly);
+              if (clipped) cells.push(clipped);
+            }
+          }
+          return cells;
+        };
+        return closestTo(target, 3, 20, make);
+      } },
+
+    { name: "Columns", build(target) {
+        /* 縦の柱。隣り合う柱で継ぎ目をずらす */
+        const make = (cols) => {
+          const rows = rowsFor(cols);
+          const cells = [];
+          for (let i = 0; i < cols; i++) {
+            const k = i % 2 === 0 ? rows : Math.max(1, rows - 1);
+            const v = cuts(0, 1, k);
+            for (let j = 0; j < k; j++) {
+              cells.push(rectCell(i / cols, v[j], (i + 1) / cols, v[j + 1]));
+            }
+          }
+          return cells;
+        };
+        return closestTo(target, 2, 14, make);
+      } },
+
+    { name: "Brickwork", build(target) {
+        /* 煉瓦積み。一段おきに半分ずらす */
+        const make = (rows) => {
+          const cols = colsFor(rows);
+          const cells = [];
+          for (let j = 0; j < rows; j++) {
+            const off = (j % 2) * 0.5 / cols;
+            if (off > 0) cells.push(rectCell(0, j / rows, off, (j + 1) / rows));
+            for (let i = 0; i < cols; i++) {
+              const u0 = off + i / cols;
+              if (u0 >= 1) break;
+              cells.push(rectCell(u0, j / rows, Math.min(u0 + 1 / cols, 1), (j + 1) / rows));
+            }
+          }
+          return cells;
+        };
+        return closestTo(target, 1, 20, make);
+      } },
+
+    { name: "Door Panel", build(target) {
+        /* 上は素直な格子、下は菱形。扉の硝子のような割り */
+        const make = (rows) => {
+          const cols = colsFor(rows, 1);
+          const b = Math.min(0.15, 0.42 / (rows + 1));
+          const mid = 0.45;
+          const up = Math.max(1, Math.round(rows * 0.45));
+          const lo = Math.max(1, rows - up);
+          const u = cuts(b, 1 - b, cols);
+          const vSide = cuts(b, 1 - b, rows);
+          const vUp = cuts(b, mid, up), vLo = cuts(mid, 1 - b, lo);
+          const cells = [
+            rectCell(0, 0, b, b), rectCell(1 - b, 0, 1, b),
+            rectCell(0, 1 - b, b, 1), rectCell(1 - b, 1 - b, 1, 1),
+          ];
+          for (let i = 0; i < cols; i++) {
+            cells.push(rectCell(u[i], 0, u[i + 1], b), rectCell(u[i], 1 - b, u[i + 1], 1));
+          }
+          for (let j = 0; j < rows; j++) {
+            cells.push(rectCell(0, vSide[j], b, vSide[j + 1]),
+                       rectCell(1 - b, vSide[j], 1, vSide[j + 1]));
+          }
+          for (let j = 0; j < up; j++) {
+            for (let i = 0; i < cols; i++) cells.push(rectCell(u[i], vUp[j], u[i + 1], vUp[j + 1]));
+          }
+          for (let j = 0; j < lo; j++) {
+            for (let i = 0; i < cols; i++) {
+              cells.push(...diamondSplit(u[i], vLo[j], u[i + 1], vLo[j + 1]));
+            }
+          }
+          return cells;
+        };
+        return closestTo(target, 1, 8, make);
+      } },
+
+    { name: "Diamond Lattice", build(target) {
+        /* 菱形の格子 */
+        const make = (cols) => {
+          const rows = rowsFor(cols);
+          const du = 1 / cols, dv = 1 / rows;
+          const cells = [];
+          for (let j = 0; j <= rows; j++) {
+            for (let i = 0; i <= cols; i++) {
+              if ((i + j) % 2 !== 0) continue;
+              const cx = i * du, cy = j * dv;
+              const clipped = clipToUnit([[cx, cy - dv], [cx + du, cy], [cx, cy + dv], [cx - du, cy]]);
+              if (clipped) cells.push(clipped);
+            }
+          }
+          return cells;
+        };
+        return closestTo(target, 2, 16, make);
+      } },
+
+    { name: "Wheel Window", build(target) {
         /* 四辺に接する楕円+車輪状の割り+四隅 */
-        const cells = [];
-        const cx = 0.5, cy = 0.5;
-        const pt = (a, f) => [cx + Math.cos(a) * 0.5 * f, cy + Math.sin(a) * 0.5 * f];
-        const SEC = 8, RIN = [0, 0.55, 1];
-        for (let k = 0; k < SEC; k++) {
-          const a0 = Math.PI * 2 * k / SEC + Math.PI / SEC;
-          const a1 = Math.PI * 2 * (k + 1) / SEC + Math.PI / SEC;
-          for (let bi = 0; bi < RIN.length - 1; bi++) {
-            const f0 = RIN[bi], f1 = RIN[bi + 1];
-            const poly = [];
-            for (let i = 0; i <= 3; i++) poly.push(pt(a0 + (a1 - a0) * i / 3, f1));
-            if (f0 === 0) poly.push([cx, cy]);
-            else for (let i = 3; i >= 0; i--) poly.push(pt(a0 + (a1 - a0) * i / 3, f0));
+        const make = (n) => {
+          const SEC = clamp(n * 2, 6, 28);
+          const RIN = clamp(Math.round(n / 2), 2, 5);
+          const cx = 0.5, cy = 0.5;
+          const pt = (a, f) => [cx + Math.cos(a) * 0.5 * f, cy + Math.sin(a) * 0.5 * f];
+          const rings = [0];
+          for (let r = 1; r <= RIN; r++) rings.push(r / RIN);
+          const cells = [];
+          for (let k = 0; k < SEC; k++) {
+            const a0 = Math.PI * 2 * k / SEC + Math.PI / SEC;
+            const a1 = Math.PI * 2 * (k + 1) / SEC + Math.PI / SEC;
+            for (let bi = 0; bi < rings.length - 1; bi++) {
+              const f0 = rings[bi], f1 = rings[bi + 1];
+              const poly = [];
+              for (let i = 0; i <= 3; i++) poly.push(pt(a0 + (a1 - a0) * i / 3, f1));
+              if (f0 === 0) poly.push([cx, cy]);
+              else for (let i = 3; i >= 0; i--) poly.push(pt(a0 + (a1 - a0) * i / 3, f0));
+              cells.push(poly);
+            }
+          }
+          const corners = [
+            { c: [0, 0], aFrom: Math.PI * 1.5, aTo: Math.PI },
+            { c: [1, 0], aFrom: Math.PI * 2,   aTo: Math.PI * 1.5 },
+            { c: [1, 1], aFrom: Math.PI * 0.5, aTo: 0 },
+            { c: [0, 1], aFrom: Math.PI,       aTo: Math.PI * 0.5 },
+          ];
+          for (const co of corners) {
+            const poly = [co.c];
+            for (let i = 0; i <= 6; i++) poly.push(pt(co.aFrom + (co.aTo - co.aFrom) * i / 6, 1));
             cells.push(poly);
           }
-        }
-        const corners = [
-          { c: [0, 0], aFrom: Math.PI * 1.5, aTo: Math.PI },
-          { c: [1, 0], aFrom: Math.PI * 2,   aTo: Math.PI * 1.5 },
-          { c: [1, 1], aFrom: Math.PI * 0.5, aTo: 0 },
-          { c: [0, 1], aFrom: Math.PI,       aTo: Math.PI * 0.5 },
-        ];
-        for (const co of corners) {
-          const poly = [co.c];
-          for (let i = 0; i <= 6; i++) {
-            poly.push(pt(co.aFrom + (co.aTo - co.aFrom) * i / 6, 1));
-          }
-          cells.push(poly);
-        }
-        return cells;
+          return cells;
+        };
+        return closestTo(target, 3, 14, make);
       } },
 
-    { name: "Chevron", build() {
-        const bands = 4, cols = 6, cells = [];
-        for (let j = 0; j < bands; j++) {
-          const vt = j / bands, vb = (j + 1) / bands;
-          const y0 = j % 2 === 0 ? vb : vt;
-          const y1 = j % 2 === 0 ? vt : vb;
-          const pts = [];
-          for (let i = 0; i <= cols; i++) {
-            pts.push([i / cols, i % 2 === 0 ? y0 : y1]);
+    { name: "Chevron", build(target) {
+        /* 山形の帯を積む */
+        const make = (bands) => {
+          const cols = Math.max(3, Math.round(bands * 1.6));
+          const cells = [];
+          for (let j = 0; j < bands; j++) {
+            const vt = j / bands, vb = (j + 1) / bands;
+            const y0 = j % 2 === 0 ? vb : vt;
+            const y1 = j % 2 === 0 ? vt : vb;
+            const pts = [];
+            for (let i = 0; i <= cols; i++) pts.push([i / cols, i % 2 === 0 ? y0 : y1]);
+            for (let i = 0; i < pts.length - 2; i++) cells.push([pts[i], pts[i + 1], pts[i + 2]]);
+            cells.push([[0, y0], [0, y1], pts[1]]);
+            cells.push([[1, pts[cols][1]], [1, pts[cols][1] === y0 ? y1 : y0], pts[cols - 1]]);
           }
-          for (let i = 0; i < pts.length - 2; i++) {
-            cells.push([pts[i], pts[i + 1], pts[i + 2]]);
-          }
-          cells.push([[0, y0], [0, y1], pts[1]]);
-          cells.push([[1, pts[cols][1]], [1, pts[cols][1] === y0 ? y1 : y0], pts[cols - 1]]);
-        }
-        return cells;
+          return cells;
+        };
+        return closestTo(target, 1, 14, make);
       } },
   ];
 
-  /* 難易度ごとに、混ざって出てくる手作り枠(セル数で振り分け)。
-     hard以上は目標枚数が多いためランダム生成のみ */
+  /* ============================================================
+     どの手作り枠を、どの難易度に混ぜるか
+     ------------------------------------------------------------
+     条件は2つ。
+       ・枚数がその難易度の目標のまわりに収まる
+         (同じ難易度を選んだのに手応えが別物にならない)
+       ・どのセルも指で押せる大きさ(手のひらに収まる画面を基準に)
+     枠によっては、細かくすると中心の一枚が小さくなりすぎて
+     この条件を満たせない。その難易度には出さない。
+     下の表は fitsDifficulty で決めたもの。テストで照らし合わせている
+     ので、枠を足したり形を変えたりしたら、そこで気づける。
+     ============================================================ */
+  const FIT_PANEL = { w: 255, h: 411 };   /* ふつうのスマホでの窓の大きさ(px) */
+
+  /* 目標からどこまで離れてよいか。easy は枚数が少ないので、幅も少し持たせる */
+  const fitSlack = (target) => Math.max(4, target * 0.35);
+
+  function fitsDifficulty(frame, diffKey) {
+    const target = DIFF_TARGET[diffKey];
+    const cells = frame.build(target);
+    if (Math.abs(cells.length - target) > fitSlack(target)) return false;
+    for (const c of cells) {
+      const xs = c.map(p => p[0]), ys = c.map(p => p[1]);
+      const w = (Math.max(...xs) - Math.min(...xs)) * FIT_PANEL.w;
+      const h = (Math.max(...ys) - Math.min(...ys)) * FIT_PANEL.h;
+      if (Math.min(w, h) < TAP_MIN_PX) return false;
+    }
+    return true;
+  }
+
   const HANDMADE_BY_DIFF = {
-    easy:   ["Columns", "Door Panel", "Grand Diamond"],
-    normal: ["Three Diamonds", "Sunburst", "Diamond Lattice", "Wheel Window", "Checker", "Brickwork", "Chevron"],
-    hard:   [],
-    vhard:  [],
+    easy:   ["Checker", "Grand Diamond", "Three Diamonds", "Sunburst", "Columns",
+             "Brickwork", "Door Panel", "Diamond Lattice", "Chevron"],
+    normal: ["Checker", "Grand Diamond", "Three Diamonds", "Columns", "Brickwork",
+             "Door Panel", "Diamond Lattice", "Wheel Window", "Chevron"],
+    hard:   ["Checker", "Columns", "Brickwork", "Diamond Lattice", "Chevron"],
+    vhard:  ["Checker", "Columns", "Diamond Lattice", "Chevron"],
   };
 
   /* ============================================================
@@ -546,7 +684,7 @@
   return {
     COLOR_FAMILIES,
     rectCell, diamondSplit, gridCells, polyArea, clipConvex, clipToUnit, UNIT_RECT, pointInPoly,
-    WINDOW_SHAPES, HANDMADE, HANDMADE_BY_DIFF,
+    WINDOW_SHAPES, HANDMADE, HANDMADE_BY_DIFF, fitsDifficulty, fitSlack, FIT_PANEL,
     DIFF_TARGET, DIFF_MIN_PX, randomFrame,
     TAP_MIN_PX, attachSlivers,
     SAVE_VERSION, packWindow, unpackWindow,

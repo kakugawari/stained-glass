@@ -205,25 +205,78 @@ test('切り抜いたあとも、すべてのセルが指で押して嵌めら�
   }
 });
 
+test('目標を渡し忘れても、枠は作られる(normal の細かさ)', () => {
+  const a = C.HANDMADE[0].build();
+  const b = C.HANDMADE[0].build(C.DIFF_TARGET.normal);
+  assert.ok(Array.isArray(a) && a.length === b.length);
+});
+
 test('押せる大きさのセルは、自分で自分の持ち主になる(勝手にまとめない)', () => {
-  const cells = C.HANDMADE.find(f => f.name === 'Checker').build();
+  const cells = C.HANDMADE.find(f => f.name === 'Checker').build(C.DIFF_TARGET.normal);
   const host = C.attachSlivers(cells, 300, 484);
   assert.deepStrictEqual(host, cells.map((_, i) => i));
 });
 
 /* ---------- 手作り枠 ---------- */
 
-test('手作り枠10種は、どれも窓を埋め尽くす', () => {
+test('手作り枠10種は、どの細かさでも窓を埋め尽くす', () => {
   assert.strictEqual(C.HANDMADE.length, 10);
   for (const frame of C.HANDMADE) {
-    const cells = frame.build();
-    assert.ok(cells.length >= 10, `${frame.name}: ${cells.length} 枚しかない`);
-    assert.ok(Math.abs(sumArea(cells) - 1) < 0.002,
-      `${frame.name}: 面積の合計が ${sumArea(cells).toFixed(4)}(隙間か重なりがある)`);
-    for (const cell of cells) {
-      assert.ok(cell.length >= 3, `${frame.name}: 頂点が足りないセル`);
-      assert.ok(inUnit(cell), `${frame.name}: 窓からはみ出すセル`);
-      assert.ok(Math.abs(C.polyArea(cell)) > 1e-5, `${frame.name}: つぶれたセル`);
+    for (const diff of DIFFS) {
+      const cells = frame.build(C.DIFF_TARGET[diff]);
+      assert.ok(cells.length >= 4, `${frame.name} (${diff}): ${cells.length} 枚しかない`);
+      assert.ok(Math.abs(sumArea(cells) - 1) < 0.01,
+        `${frame.name} (${diff}): 面積の合計が ${sumArea(cells).toFixed(4)}(隙間か重なりがある)`);
+      for (const cell of cells) {
+        assert.ok(cell.length >= 3, `${frame.name} (${diff}): 頂点が足りないセル`);
+        assert.ok(inUnit(cell), `${frame.name} (${diff}): 窓からはみ出すセル`);
+        assert.ok(Math.abs(C.polyArea(cell)) > 1e-5, `${frame.name} (${diff}): つぶれたセル`);
+      }
+    }
+  }
+});
+
+test('手作り枠は、目標の枚数に合わせて細かさが変わる', () => {
+  /* 同じ難易度を選んだのに手応えが別物にならないための、いちばんの要 */
+  for (const frame of C.HANDMADE) {
+    let prev = 0;
+    for (const diff of DIFFS) {
+      const n = frame.build(C.DIFF_TARGET[diff]).length;
+      assert.ok(n >= prev, `${frame.name}: ${diff} で枚数が減った (${prev} → ${n})`);
+      prev = n;
+    }
+    /* easy と vhard で、はっきり差が出ること */
+    const easy = frame.build(C.DIFF_TARGET.easy).length;
+    const vhard = frame.build(C.DIFF_TARGET.vhard).length;
+    assert.ok(vhard >= easy * 3, `${frame.name}: easy ${easy} 枚 → vhard ${vhard} 枚 では差が小さい`);
+  }
+});
+
+test('難易度に混ぜる手作り枠の表が、条件と食い違っていない', () => {
+  /* 表は手で書いてある。枠を足したり形を変えたら、ここで気づける */
+  for (const diff of DIFFS) {
+    const listed = new Set(C.HANDMADE_BY_DIFF[diff]);
+    for (const frame of C.HANDMADE) {
+      const fits = C.fitsDifficulty(frame, diff);
+      assert.strictEqual(listed.has(frame.name), fits,
+        fits
+          ? `${diff} に ${frame.name} を入れ忘れている`
+          : `${diff} の ${frame.name} は条件を満たしていないのに表に載っている`);
+    }
+    assert.ok(listed.size >= 4, `${diff}: 混ざる手作り枠が ${listed.size} 種しかない`);
+  }
+});
+
+test('手作り枠も、指で押せる大きさに収まっている', () => {
+  for (const diff of DIFFS) {
+    for (const name of C.HANDMADE_BY_DIFF[diff]) {
+      const frame = C.HANDMADE.find(f => f.name === name);
+      for (const cell of frame.build(C.DIFF_TARGET[diff])) {
+        const b = bbox(cell);
+        const w = (b.u1 - b.u0) * C.FIT_PANEL.w, h = (b.v1 - b.v0) * C.FIT_PANEL.h;
+        assert.ok(Math.min(w, h) >= C.TAP_MIN_PX,
+          `${name} (${diff}): ${Math.min(w, h).toFixed(1)}px のセルがある`);
+      }
     }
   }
 });

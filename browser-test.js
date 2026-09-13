@@ -318,6 +318,25 @@ async function run() {
     ok(counts.easy < counts.normal && counts.normal < counts.hard && counts.hard < counts.vhard,
       `難易度が上がるほど枚数が増える (${JSON.stringify(counts)})`);
 
+    // 同じ難易度を引き直しても、手応えが別物にならないか
+    // (以前は normal で 12 枚の窓と 48 枚の窓が出ていた)
+    for (const [key, id] of [['easy', 'btn-easy'], ['normal', 'btn-normal'],
+                             ['hard', 'btn-hard'], ['vhard', 'btn-vhard']]) {
+      const draws = [];
+      for (let i = 0; i < 12; i++) {
+        await phone.locator('#' + id).tap();
+        await phone.waitForTimeout(40);
+        const s = await state(phone);
+        draws.push(s.hosts.filter((h, k) => h === k).length);
+      }
+      const target = await phone.evaluate((k) => window.Core.DIFF_TARGET[k], key);
+      const slack = Math.max(4, target * 0.35);
+      const lo = Math.min(...draws), hi = Math.max(...draws);
+      ok(lo >= target - slack && hi <= target + slack,
+        `${key}: 12回引いても ${lo}〜${hi} 回で収まる (目標 ${target} ± ${Math.round(slack)})`);
+      ok(hi / lo <= 2, `${key}: いちばん多い窓といちばん少ない窓の差が 2 倍以内 (${(hi / lo).toFixed(1)} 倍)`);
+    }
+
     // ------------------------------------------------ 埋めきる
     section('埋めきる');
     await phone.locator('#btn-easy').tap();
