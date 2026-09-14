@@ -237,25 +237,49 @@ async function run() {
     section('なぞって塗る');
     await draw(phone, 'normal');
 
-    // 窓を横切ってなぞると、通った道が塗れる
+    // 窓を横切ってなぞると、通った道がもれなく塗れる。
+    // 何枚通るかは窓しだいなので、「指が通ったセルはすべて塗れたか」で見る
     const swipe = await phone.evaluate(async () => {
       const cv = document.getElementById('cv');
       const p = window.__app.state().panel;
       const y = p.y + p.h * 0.5;
+      /* 外形はアーチや丸窓のこともある。窓の中に入った所から始める
+         (窓の外から始めると、それは「光のはらい」になる) */
+      let x0 = p.x + 4;
+      while (x0 < p.x + p.w && window.__app.cellAtXY(x0, y) < 0) x0 += 1;
+      const x1 = p.x + p.w - 4;
       const fire = (type, x, yy) =>
         cv.dispatchEvent(new PointerEvent(type, { clientX: x, clientY: yy, bubbles: true }));
-      fire('pointerdown', p.x + 4, y);
+      /* 指が通る道すじと、その中にいた長さ(px)を先に拾っておく。
+         角をかすめただけのセルまでは求めない。6px 以上またいだ物を見る */
+      const len = new Map();
+      const N = 600, step = (x1 - x0) / N;
+      for (let i = 0; i <= N; i++) {
+        const hit = window.__app.cellAtXY(x0 + step * i, y);
+        if (hit >= 0) {
+          const h = window.__app.state().hosts[hit];
+          len.set(h, (len.get(h) || 0) + step);
+        }
+      }
+      const onPath = new Set([...len].filter(([, L]) => L >= 6).map(([h]) => h));
+      fire('pointerdown', x0, y);
       for (let i = 1; i <= 10; i++) {
-        fire('pointermove', p.x + 4 + (p.w - 8) * i / 10, y);
+        fire('pointermove', x0 + (x1 - x0) * i / 10, y);
         await new Promise((r) => setTimeout(r, 12));
       }
       window.dispatchEvent(new PointerEvent('pointerup', { bubbles: true }));
       await new Promise((r) => setTimeout(r, 60));
       const s = window.__app.state();
       return { filled: s.fills.filter((f) => f !== null).length, fills: s.fills.slice(),
+               onPath: onPath.size,
+               missed: [...onPath].filter((h) => s.fills[h] === null).length,
+               startedInside: window.__app.cellAtXY(x0, y) >= 0,
                sweeping: window.__app.sweeping() };
     });
-    ok(swipe.filled >= 4, `なぞった道すじが塗れる (${swipe.filled} 枚)`);
+    ok(swipe.startedInside, 'このなぞりは窓の中から始まっている(前提の確認)');
+    ok(swipe.onPath >= 3 && swipe.missed === 0,
+      `なぞった道すじが、もれなく塗れる (6px 以上またいだ ${swipe.onPath} 枚 / ` +
+      `塗り残し ${swipe.missed} 枚)`);
     ok(!swipe.sweeping, '窓の中から始めたなぞりでは、光のはらいにならない');
 
     // 塗った上をもう一度なぞっても、塗り替わらない(うっかり指がすべっても壊れない)
@@ -303,6 +327,164 @@ async function run() {
     ok(flick.sweeping, '窓の外から速くはらうと、光の帯が走る');
     ok(flick.added === 0, 'そのはらいでは硝子が 1 枚も嵌まらない');
 
+    // ------------------------------------------------ 色を選ぶ帯
+    section('色を選ぶ帯');
+    const barMetrics = await phone.evaluate(() => {
+      const sw = [...document.querySelectorAll('.swatch')];
+      const box = sw.map((e) => e.getBoundingClientRect());
+      const disc = sw.map((e) => e.querySelector('i').getBoundingClientRect());
+      const row = document.getElementById('swatches');
+      return {
+        n: sw.length,
+        tapMin: Math.round(Math.min(...box.map((r) => Math.min(r.width, r.height)))),
+        discMin: Math.round(Math.min(...disc.map((r) => r.width))),
+        bottomGap: Math.round(window.innerHeight - Math.max(...box.map((r) => r.bottom))),
+        scrollable: row.scrollWidth > row.clientWidth + 1,
+      };
+    });
+    /* Apple の目安は 44pt。前は 26px しかなく、押しにくかった */
+    ok(barMetrics.tapMin >= 44, `色の丸は指で押せる大きさ (押せる所 ${barMetrics.tapMin}px)`);
+    ok(barMetrics.discMin >= 32, `丸そのものも小さすぎない (${barMetrics.discMin}px)`);
+    /* 画面のいちばん下は、ホームバーを上げる指の通り道 */
+    ok(barMetrics.bottomGap >= 16,
+      `色の帯が画面のいちばん下から離れている (${barMetrics.bottomGap}px)`);
+
+    // 押した色が、実際にその色味で嵌まるか
+    const pick = await phone.evaluate(async () => {
+      const sw = [...document.querySelectorAll('.swatch')];
+      const el = sw[sw.length - 1];
+      el.scrollIntoView({ inline: 'center' });
+      await new Promise((r) => setTimeout(r, 60));
+      el.click();
+      const idx = Number(el.dataset.family);
+      window.__app.newWindow('veasy');
+      const c = window.__app.cellCenter(0);
+      window.__app.tapCell(c.x, c.y);
+      const got = window.__app.state().fills.find((f) => f !== null);
+      return { name: window.Core.COLOR_FAMILIES[idx].name,
+               ok: window.Core.COLOR_FAMILIES[idx].shades.includes(got), got };
+    });
+    ok(pick.ok, `選んだ色「${pick.name}」の硝子が嵌まる (${pick.got})`);
+
+    // 帯からはみ出す数になっても、なぞって出せる
+    ok(await phone.evaluate(() => {
+      const row = document.getElementById('swatches');
+      return getComputedStyle(row).overflowX === 'auto';
+    }), '色が増えて入りきらない時は、なぞって出せる');
+
+    // ------------------------------------------------ 硝子棚
+    section('硝子棚');
+    await phone.locator('#to-title').tap();
+    await phone.waitForTimeout(120);
+    await phone.evaluate(() => localStorage.removeItem('stained-glass:progress'));
+    await phone.reload();
+    await phone.waitForFunction(() => window.__app);
+
+    const shelfStart = await phone.evaluate(() => ({
+      swatches: document.querySelectorAll('.swatch').length,
+      all: window.Core.COLOR_FAMILIES.length,
+      cleared: window.__app.cleared(),
+    }));
+    ok(shelfStart.cleared === 0 && shelfStart.swatches === 10 && shelfStart.all === 20,
+      `はじめは ${shelfStart.swatches} 色 (棚には全部で ${shelfStart.all} 色)`);
+
+    await phone.locator('#shelf-open').tap();
+    await phone.waitForTimeout(200);
+    const shelf = await phone.evaluate(() => ({
+      shown: !document.getElementById('shelf').hidden,
+      colors: document.querySelectorAll('#shelf-colors .shelf-item').length,
+      locked: document.querySelectorAll('#shelf-colors .shelf-item.locked').length,
+      frames: document.querySelectorAll('#shelf-frames .shelf-item').length,
+      framesLocked: document.querySelectorAll('#shelf-frames .shelf-item.locked').length,
+      tally: document.getElementById('shelf-tally').textContent,
+    }));
+    ok(shelf.shown && shelf.colors === 20 && shelf.locked === 10,
+      `棚には 20 色ぜんぶ並び、まだの ${shelf.locked} 色は灰色`);
+    ok(shelf.frames === 5 && shelf.framesLocked === 4,
+      `木枠は ${shelf.frames} 種、まだの ${shelf.framesLocked} 種は灰色`);
+    ok(/つぎは/.test(shelf.tally) && /あと/.test(shelf.tally),
+      `つぎに増える物が出ている (${shelf.tally.replace(/\s+/g, ' ').trim()})`);
+    await phone.locator('#shelf-close').tap();
+    await phone.waitForTimeout(120);
+    ok(await phone.evaluate(() => document.getElementById('shelf').hidden),
+      '棚はとじられる');
+
+    // 窓を1つ仕上げると、数が増えて色も増える
+    await start(phone, 'veasy');
+    const grew = await phone.evaluate(async () => {
+      const before = { cleared: window.__app.cleared(),
+                       swatches: document.querySelectorAll('.swatch').length };
+      const s = window.__app.state();
+      for (let i = 0; i < s.cells.length; i++) {
+        if (s.hosts[i] !== i) continue;
+        const c = window.__app.cellCenter(i);
+        window.__app.tapCell(c.x, c.y);
+      }
+      await new Promise((r) => setTimeout(r, 1200));   /* お知らせは鐘のあと */
+      return { before,
+               cleared: window.__app.cleared(),
+               swatches: document.querySelectorAll('.swatch').length,
+               note: document.getElementById('unlock').classList.contains('show'),
+               noteText: document.getElementById('unlock').textContent,
+               completed: window.__app.state().completed };
+    });
+    ok(grew.completed && grew.cleared === grew.before.cleared + 1,
+      `窓を1つ仕上げると、仕上げた窓が ${grew.before.cleared} → ${grew.cleared} になる`);
+    ok(grew.swatches === grew.before.swatches + 1,
+      `色がその場で ${grew.before.swatches} → ${grew.swatches} に増える`);
+    ok(grew.note && /臙脂/.test(grew.noteText),
+      `増えたことを知らせる (${grew.noteText})`);
+
+    // 仕上げた窓は、開き直しても二重に数えない
+    await phone.reload();
+    await phone.waitForFunction(() => window.__app);
+    ok(await phone.evaluate(() => window.__app.cleared()) === grew.cleared,
+      '開き直しても、同じ窓を二重に数えない');
+
+    // 木枠は、手に入れた物だけ選べる
+    await phone.evaluate(() => {
+      localStorage.setItem('stained-glass:progress',
+        JSON.stringify({ cleared: 10, frame: 'shunuri' }));
+    });
+    await phone.reload();
+    await phone.waitForFunction(() => window.__app);
+    await phone.locator('#shelf-open').tap();
+    await phone.waitForTimeout(200);
+    ok(await phone.evaluate(() =>
+      document.querySelectorAll('#shelf-frames .shelf-item.picked').length === 1),
+      '選んでいる木枠に印が付く');
+    // まだ手に入れていない木枠がしまってあったら、最初の物に戻す
+    await phone.evaluate(() => {
+      localStorage.setItem('stained-glass:progress',
+        JSON.stringify({ cleared: 0, frame: 'seidou' }));
+    });
+    await phone.reload();
+    await phone.waitForFunction(() => window.__app);
+    ok(await phone.evaluate(() => window.__app.frame() === window.Core.FRAMES[0].key),
+      'まだ手に入れていない木枠がしまってあっても、最初の木枠で開く');
+    // 壊れたものが入っていても落ちない
+    await phone.evaluate(() => localStorage.setItem('stained-glass:progress', '{こわれている'));
+    await phone.reload();
+    await phone.waitForFunction(() => window.__app);
+    ok(await phone.evaluate(() => window.__app.cleared()) === 0 &&
+       await phone.evaluate(() => window.__app.screen()) === 'title',
+      '棚の記録が壊れていても、普通に開ける');
+    await phone.evaluate(() => localStorage.removeItem('stained-glass:progress'));
+    await phone.reload();
+    await phone.waitForFunction(() => window.__app);
+    /* このあとの節は「塗りかけの窓」を前提にしているので、何枚か嵌めておく */
+    await start(phone, 'normal');
+    await phone.evaluate(() => {
+      const s = window.__app.state();
+      for (let i = 0, n = 0; i < s.cells.length && n < 5; i++) {
+        if (s.hosts[i] !== i) continue;
+        const c = window.__app.cellCenter(i);
+        window.__app.tapCell(c.x, c.y);
+        n++;
+      }
+    });
+    await phone.waitForTimeout(150);
+
     // ------------------------------------------------ 壁の色
     section('壁の色');
     await phone.locator('#to-title').tap();
@@ -344,6 +526,20 @@ async function run() {
       '塗りかけがあると「つづきから」が出る');
     ok((await phone.textContent('#resume-note')).includes(String(kept.remain)),
       `「つづきから」にのこり枚数が出る (${(await phone.textContent('#resume-note')).trim()})`);
+    /* タイトルでは操作帯が隠れている。そこで窓を組み直すと大きさが変わり、
+       かけらの預け先が変わって枚数が1枚ずれる。どちらの画面でも同じ大きさか */
+    const panelTitle = (await state(phone)).panel;
+    await phone.locator('#go-resume').tap();
+    await phone.waitForTimeout(250);
+    const panelPlay = (await state(phone)).panel;
+    ok(Math.abs(panelTitle.w - panelPlay.w) < 0.5 && Math.abs(panelTitle.h - panelPlay.h) < 0.5,
+      `タイトルでも遊ぶ画面でも窓の大きさが同じ ` +
+      `(${Math.round(panelTitle.w)}x${Math.round(panelTitle.h)} / ` +
+      `${Math.round(panelPlay.w)}x${Math.round(panelPlay.h)})`);
+    ok((await state(phone)).remain === kept.remain,
+      `のこり枚数も画面をまたいで変わらない (${kept.remain})`);
+    await phone.locator('#to-title').tap();
+    await phone.waitForTimeout(150);
 
     await phone.locator('#go-resume').tap();
     await phone.waitForTimeout(250);

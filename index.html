@@ -58,9 +58,10 @@
     color: rgba(var(--ink),0.78);
     font-size: 13px; letter-spacing: 0.28em;
   }
-  #theme-toggle {
+  #start-tools { display: flex; gap: 8px; }
+  #start-tools .btn {
     font-size: 11px; letter-spacing: 0.12em;
-    padding: 7px 14px; opacity: 0.8;
+    padding: 7px 14px; opacity: 0.85;
   }
   #start-menu {
     display: flex; flex-direction: column; gap: 9px;
@@ -97,10 +98,77 @@
     #start { gap: 10px; padding: 14px 20px calc(14px + env(safe-area-inset-bottom)); }
     #start-icon { width: min(30vw, 118px); }
     #start-sub { font-size: 12px; letter-spacing: 0.2em; }
-    #theme-toggle { padding: 5px 12px; }
+    #start-tools .btn { padding: 5px 12px; }
     #start-menu { gap: 6px; }
     .start-btn { min-height: 42px; padding: 8px 14px; font-size: 14px; }
   }
+
+  /* ===== 棚に何か増えた時のお知らせ ===== */
+  #unlock {
+    position: fixed; left: 50%; top: 56px; transform: translateX(-50%);
+    max-width: 84vw; text-align: center;
+    padding: 8px 16px;
+    color: rgba(var(--ink),0.95);
+    background: rgba(var(--panel),0.92);
+    border: 1px solid rgba(var(--accent),0.55);
+    border-radius: 4px;
+    font-size: 12.5px; letter-spacing: 0.14em; line-height: 1.5;
+    box-shadow: 0 0 22px rgba(var(--accent),0.22);
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.7s ease;
+    z-index: 6;
+  }
+  #unlock.show { opacity: 1; }
+
+  /* ===== 硝子棚 ===== */
+  #shelf {
+    position: fixed; inset: 0; z-index: 7;
+    display: flex; flex-direction: column;
+    background: var(--start-bg);
+    padding: calc(14px + env(safe-area-inset-top)) 16px
+             calc(14px + env(safe-area-inset-bottom));
+    overflow-y: auto;
+  }
+  #shelf[hidden] { display: none; }
+  #shelf h2 {
+    margin: 2px 0 2px; text-align: center;
+    color: rgba(var(--ink),0.92);
+    font-size: 15px; font-weight: normal; letter-spacing: 0.4em;
+  }
+  #shelf .tally {
+    text-align: center; margin-bottom: 14px;
+    color: rgba(var(--ink-soft),0.75);
+    font-size: 11.5px; letter-spacing: 0.16em; line-height: 1.7;
+  }
+  #shelf .tally b { color: rgba(var(--accent),1); font-weight: normal; }
+  #shelf h3 {
+    margin: 14px 0 8px; font-size: 11.5px; font-weight: normal;
+    letter-spacing: 0.3em; color: rgba(var(--ink-soft),0.8);
+    border-bottom: 1px solid rgba(var(--ink),0.16); padding-bottom: 5px;
+  }
+  .shelf-grid { display: flex; flex-wrap: wrap; gap: 10px 8px; justify-content: center; }
+  .shelf-item {
+    width: 58px; text-align: center;
+    font-size: 10px; letter-spacing: 0.06em; line-height: 1.5;
+    color: rgba(var(--ink),0.9);
+  }
+  .shelf-item .disc {
+    width: 34px; height: 34px; border-radius: 50%; margin: 0 auto 4px;
+    border: 1px solid rgba(var(--ink),0.25);
+  }
+  .shelf-item .bar {
+    width: 44px; height: 20px; border-radius: 3px; margin: 0 auto 4px;
+    border: 1px solid rgba(var(--ink),0.25);
+  }
+  .shelf-item.locked { color: rgba(var(--ink-soft),0.45); }
+  .shelf-item.locked .disc, .shelf-item.locked .bar { filter: grayscale(1); opacity: 0.26; }
+  .shelf-item.pickable { cursor: pointer; }
+  .shelf-item.picked .bar {
+    box-shadow: 0 0 9px 2px rgba(var(--accent),0.45);
+    border-color: rgba(var(--ink),0.85);
+  }
+  .shelf-item.picked { color: rgba(var(--accent),1); }
+  #shelf-close { align-self: center; margin-top: 18px; }
 
   /* ===== タイトルへもどる ===== */
   #to-title {
@@ -137,13 +205,16 @@
   }
   #remain.hidden { opacity: 0; }
 
-  /* ===== 下部の操作帯(2段:上=色、下=ボタン) ===== */
+  /* ===== 下部の操作帯(色を選ぶ) =====
+     丸は指で押せる大きさに。見た目の丸は 34px、押せる所は 44px
+     (Apple の目安と同じ)。画面のいちばん下は、ホームバーを上げる指の
+     通り道なので、そこから離して置く */
   #bar {
     position: fixed; bottom: 0; left: 0; right: 0;
     display: flex; flex-direction: column; align-items: center;
     gap: 9px;
-    padding: 10px 8px calc(10px + env(safe-area-inset-bottom));
-    background: linear-gradient(to top, rgba(var(--bar-fade),0.92), rgba(var(--bar-fade),0));
+    padding: 8px 0 calc(18px + env(safe-area-inset-bottom));
+    background: linear-gradient(to top, rgba(var(--bar-fade),0.94), rgba(var(--bar-fade),0));
   }
   /* ID 指定は [hidden]{display:none} より強い。閉じている時は必ず消す */
   #bar[hidden] { display: none; }
@@ -168,9 +239,20 @@
   #ask .btn { font-size: 12px; padding: 6px 12px; }
   #ask-yes { border-color: rgba(var(--accent),0.7); }
 
+  /* 色は増えていくので、入りきらない時は横になぞって出す。
+     端をぼかして「まだ先がある」と分かるようにする */
   #swatches {
-    display: flex; gap: 7px; justify-content: center; flex-wrap: nowrap;
+    display: flex; gap: 2px; flex-wrap: nowrap;
+    max-width: 100%; overflow-x: auto; overflow-y: hidden;
+    scrollbar-width: none; -ms-overflow-style: none;
+    padding: 0 10px;
+    scroll-padding: 10px;
+    -webkit-overflow-scrolling: touch;
+    touch-action: pan-x;
+    mask-image: linear-gradient(to right, transparent 0, #000 14px,
+                                #000 calc(100% - 14px), transparent 100%);
   }
+  #swatches::-webkit-scrollbar { display: none; }
   /* 横向き(背の低い画面)では、操作帯を右の端へ。縦の場所を窓に譲る */
   @media (orientation: landscape) and (max-height: 560px) {
     #bar {
@@ -179,25 +261,37 @@
       padding: 8px calc(8px + env(safe-area-inset-right)) 8px 12px;
       background: linear-gradient(to left, rgba(var(--bar-fade),0.92), rgba(var(--bar-fade),0));
     }
-    #swatches { display: grid; grid-template-columns: repeat(2, auto); gap: 6px; }
+    #swatches {
+      display: flex; flex-direction: column; flex-wrap: nowrap;
+      overflow-x: hidden; overflow-y: auto; max-height: 100%;
+      padding: 10px 0; touch-action: pan-y;
+      mask-image: linear-gradient(to bottom, transparent 0, #000 14px,
+                                  #000 calc(100% - 14px), transparent 100%);
+    }
     #buttons  { display: grid; grid-template-columns: repeat(2, auto); gap: 6px; }
     #ask {
       position: fixed; left: 12px; bottom: 12px; right: auto;
       max-width: 58vw; margin: 0;
     }
   }
+  /* 押せる所(44px)と、見える丸(34px)を分ける */
   .swatch {
-    width: 24px; height: 24px; border-radius: 50%;
-    border: 1px solid rgba(var(--ink),0.25);
-    cursor: pointer;
-    transition: transform 0.15s ease, box-shadow 0.15s ease;
-    flex-shrink: 0;
+    width: 44px; height: 44px; flex-shrink: 0;
+    display: flex; align-items: center; justify-content: center;
+    padding: 0; border: none; background: none;
+    cursor: pointer; -webkit-tap-highlight-color: transparent;
   }
-  .swatch.active {
-    transform: scale(1.22);
+  .swatch i {
+    display: block; width: 34px; height: 34px; border-radius: 50%;
+    border: 1px solid rgba(var(--ink),0.25);
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+  }
+  .swatch.active i {
+    transform: scale(1.14);
     box-shadow: 0 0 9px 2px rgba(var(--accent),0.45);
     border-color: rgba(var(--ink),0.85);
   }
+  .swatch:active i { transform: scale(0.92); }
   #buttons { display: flex; gap: 8px; }
   .btn {
     color: rgba(var(--ink),0.9);
@@ -219,6 +313,17 @@
 
 <canvas id="cv"></canvas>
 <div id="frame-name"></div>
+<div id="unlock"></div>
+
+<div id="shelf" hidden>
+  <h2>硝 子 棚</h2>
+  <div class="tally" id="shelf-tally"></div>
+  <h3>硝 子</h3>
+  <div class="shelf-grid" id="shelf-colors"></div>
+  <h3>木 枠</h3>
+  <div class="shelf-grid" id="shelf-frames"></div>
+  <button id="shelf-close" class="btn">とじる</button>
+</div>
 <div id="remain" class="hidden"></div>
 <button id="to-title" aria-label="タイトルへもどる" hidden>&#8592;</button>
 
@@ -229,7 +334,10 @@
 <div id="start">
   <img id="start-icon" src="./icon-512.png" alt="ステンドグラス">
   <div id="start-sub">硝子を嵌めて、窓に光を灯す</div>
-  <button id="theme-toggle" class="btn">暗い部屋にする</button>
+  <div id="start-tools">
+    <button id="theme-toggle" class="btn">暗い部屋にする</button>
+    <button id="shelf-open" class="btn">硝子棚</button>
+  </div>
   <div id="start-menu">
     <button class="start-btn" id="go-resume" hidden>
       <span class="name">つづきから</span><span class="note" id="resume-note"></span>
@@ -279,8 +387,36 @@ const {
   COLOR_FAMILIES, clipConvex, UNIT_RECT, pointInPoly, insidePoint, attachSlivers,
   WINDOW_SHAPES, HANDMADE, HANDMADE_BY_DIFF, makeWindow, DIFF_TARGET, relLuminance,
   pickCurveStyle, buildInBand,
+  FRAMES, unlockedColors, unlockedFrames, nextUnlock, newlyUnlocked,
   packWindow, unpackWindow,
 } = window.Core;
+
+/* ============================================================
+   硝子棚 — 仕上げた窓の数で、使える硝子と木枠が増える
+   ------------------------------------------------------------
+   増えるだけで、減らさない。数え方は「窓を1つ埋めきったら1」。
+   壊れた物が入っていても遊べるように、読む側で必ず検める。
+   ============================================================ */
+const PROGRESS_KEY = "stained-glass:progress";
+let cleared = 0;              /* 仕上げた窓の数 */
+let frameKey = FRAMES[0].key; /* 選んでいる木枠 */
+
+function loadProgress() {
+  try {
+    const d = JSON.parse(localStorage.getItem(PROGRESS_KEY));
+    if (d && Number.isInteger(d.cleared) && d.cleared >= 0) cleared = Math.min(d.cleared, 99999);
+    if (d && typeof d.frame === "string") frameKey = d.frame;
+  } catch (e) { /* 読めなくても遊べる */ }
+  /* まだ手に入っていない木枠が入っていたら、最初の物に戻す */
+  if (!unlockedFrames(cleared).some(f => f.key === frameKey)) frameKey = FRAMES[0].key;
+}
+function saveProgress() {
+  try {
+    localStorage.setItem(PROGRESS_KEY, JSON.stringify({ cleared, frame: frameKey }));
+  } catch (e) { /* 保存できなくても遊べる */ }
+}
+const curFrame = () => FRAMES.find(f => f.key === frameKey) || FRAMES[0];
+loadProgress();
 
 /* 縁取りの帯をめぐらせる割合(たまに縁のない窓も出す) */
 const BORDER_CHANCE = 0.7;
@@ -392,9 +528,27 @@ let panelRatio = 0.62;                /* 現在の外形の幅/高さ */
 const TITLE_SPACE = 30;   /* 枠の名前のぶん */
 const EDGE = 4;           /* 画面のふちの余白 */
 
+/* 操作帯の大きさ。タイトル画面では隠れていて測れないが、隠れているあいだも
+   「遊ぶ時の場所」で窓を組んでおかないと、タイトルと遊ぶ画面で窓の大きさが
+   変わってしまう。大きさが変われば、かけらの預け先も変わり、
+   「つづきから のこり N」が遊ぶ画面の枚数と1枚ずれる。
+   隠れている時は、いったん見えない形で出して測り、覚えておく */
+let barBox = null;
+function barSize() {
+  if (!barEl.hidden) { barBox = barEl.getBoundingClientRect(); return barBox; }
+  if (!barBox) {
+    barEl.style.visibility = "hidden";
+    barEl.hidden = false;
+    barBox = barEl.getBoundingClientRect();
+    barEl.hidden = true;
+    barEl.style.visibility = "";
+  }
+  return barBox;
+}
+
 function layoutPanel() {
   /* 操作帯は、縦向きなら下・横向きなら右。実寸を見て、残りを窓に使う */
-  const bar = barEl.getBoundingClientRect();
+  const bar = barSize();
   const sideBar = bar.left > W / 2;               /* 右に寄っている = 横向きの並び */
   const barH = sideBar ? 0 : (bar.height || 84);
   const barW = sideBar ? bar.width : 0;
@@ -425,6 +579,7 @@ function resize() {
   glassCv.width = W * DPR; glassCv.height = H * DPR;
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   glassCtx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  barBox = null;        /* 画面の大きさが変われば、操作帯も測り直す */
   layoutPanel();
   refreshHosts();
   redrawGlass();
@@ -438,20 +593,44 @@ const vy = v => PY + v * PH;
 let familyIdx = 6;   /* 初期は瑠璃 */
 
 const swatchesEl = document.getElementById("swatches");
-COLOR_FAMILIES.forEach((fam, i) => {
-  const el = document.createElement("div");
-  el.className = "swatch" + (i === familyIdx ? " active" : "");
-  el.title = fam.name;
-  el.style.background =
-    `radial-gradient(circle at 35% 35%, ${fam.shades[3]}, ${fam.shades[2]} 72%)`;
-  el.addEventListener("click", () => {
-    familyIdx = i;
-    for (const c of swatchesEl.children) c.classList.remove("active");
-    el.classList.add("active");
-    saveSoon();
-  });
-  swatchesEl.appendChild(el);
-});
+
+/* 硝子の丸の見た目(棚でも使う) */
+const shadeDisc = (fam) =>
+  `radial-gradient(circle at 35% 35%, ${fam.shades[3]}, ${fam.shades[2]} 72%)`;
+
+/* 棚にある色だけを帯に並べる。窓を仕上げて色が増えたら呼び直す */
+function rebuildSwatches() {
+  const open = unlockedColors(cleared);
+  if (!open.some(f => f === COLOR_FAMILIES[familyIdx])) familyIdx = 6;
+  swatchesEl.textContent = "";
+  for (const fam of open) {
+    const i = COLOR_FAMILIES.indexOf(fam);
+    const el = document.createElement("button");
+    el.type = "button";
+    el.className = "swatch" + (i === familyIdx ? " active" : "");
+    el.dataset.family = String(i);
+    el.title = fam.name;
+    el.setAttribute("aria-label", fam.name);
+    const disc = document.createElement("i");
+    disc.style.background = shadeDisc(fam);
+    el.appendChild(disc);
+    el.addEventListener("click", () => {
+      familyIdx = i;
+      for (const c of swatchesEl.children) c.classList.remove("active");
+      el.classList.add("active");
+      saveSoon();
+    });
+    swatchesEl.appendChild(el);
+  }
+  barBox = null;        /* 中身が変われば帯の高さも測り直す */
+  scrollSwatchIntoView();
+}
+
+/* 選んでいる色が画面の外にある時だけ、見える所へ寄せる */
+function scrollSwatchIntoView() {
+  const el = swatchesEl.querySelector(".swatch.active");
+  if (el && el.scrollIntoView) el.scrollIntoView({ block: "nearest", inline: "center" });
+}
 
 function pickShade() {
   const s = COLOR_FAMILIES[familyIdx].shades;
@@ -702,6 +881,7 @@ function enterPlay() {
   toTitleEl.hidden = false;
   resize();            /* 操作帯の高さが変わるので測り直す */
   updateRemain();
+  scrollSwatchIntoView();   /* 色が増えて帯がのびても、選んでいる色は見える所に */
 }
 
 function startNew(diffKey) {
@@ -909,10 +1089,34 @@ function fillGroup(h, defer) {
   if (!completed && fills.every(f => f !== null)) {
     completed = true;
     pealBells();
+    countCleared();
     saveNow();
   } else {
     saveSoon();
   }
+}
+
+/* 窓を1つ仕上げた。棚に何か増えたら知らせる */
+function countCleared() {
+  const before = cleared;
+  cleared++;
+  saveProgress();
+  const got = newlyUnlocked(before, cleared);
+  if (!got.length) return;
+  rebuildSwatches();            /* 増えた色は、その場で使える */
+  showUnlockNote(got);
+}
+
+/* 「棚に ○○ が加わりました」。鐘のあと、少し遅らせて出す */
+function showUnlockNote(got) {
+  const what = got.map(g => g.name).join(" と ");
+  const kind = got.every(g => g.kind === "frame") ? "木枠" : "硝子";
+  clearTimeout(unlockTimer);
+  unlockTimer = setTimeout(() => {
+    unlockEl.textContent = `硝子棚に ${kind}「${what}」が加わりました`;
+    unlockEl.classList.add("show");
+    unlockTimer = setTimeout(() => unlockEl.classList.remove("show"), 4200);
+  }, 900);
 }
 
 /* 押す:空いていれば嵌める。嵌まっていれば色味を差し替える */
@@ -944,7 +1148,9 @@ function paintAt(x, y) {
 
 function paintAlong(x0, y0, x1, y1) {
   const dist = Math.hypot(x1 - x0, y1 - y0);
-  const steps = Math.max(1, Math.ceil(dist / 6));   /* 6px ごとに拾う */
+  /* 3px ごとに拾う。6px 刻みだと、指が横切った長さが 6px に満たないセル
+     (斜めに掠めた所) を飛ばしてしまい、なぞった道すじに塗り残しが出る */
+  const steps = Math.max(1, Math.ceil(dist / 3));
   let painted = false;
   for (let s = 1; s <= steps; s++) {
     if (paintAt(x0 + (x1 - x0) * s / steps, y0 + (y1 - y0) * s / steps)) painted = true;
@@ -1053,10 +1259,11 @@ function drawWoodFrame() {
   ctx.save();
   ctx.beginPath();
   shapePath(ctx);
+  const wood = curFrame().wood;
   const wg = ctx.createLinearGradient(PX, PY, PX + PW, PY + PH);
-  wg.addColorStop(0, theme.frame[0]);
-  wg.addColorStop(0.5, theme.frame[1]);
-  wg.addColorStop(1, theme.frame[2]);
+  wg.addColorStop(0, wood[0]);
+  wg.addColorStop(0.5, wood[1]);
+  wg.addColorStop(1, wood[2]);
   ctx.strokeStyle = wg;
   ctx.lineWidth = b * 2;
   ctx.lineJoin = "round";
@@ -1065,7 +1272,7 @@ function drawWoodFrame() {
   ctx.strokeStyle = theme.frameInner;
   ctx.lineWidth = 2.5;
   ctx.stroke();
-  ctx.strokeStyle = theme.frameEdge;
+  ctx.strokeStyle = curFrame().edge;
   ctx.lineWidth = b * 2 + 2;
   ctx.stroke();
   ctx.restore();
@@ -1188,10 +1395,78 @@ document.getElementById("theme-toggle").addEventListener("click", () => {
   applyTheme(theme.name === "day" ? THEMES.night : THEMES.day);
   try { localStorage.setItem(THEME_KEY, theme.name); } catch (e) { /* 保存できなくても遊べる */ }
   redrawGlass();
+  if (!shelfEl.hidden) buildShelf();   /* 棚を開いたまま壁を変えた時 */
 });
 
-resize();
+/* ============================================================
+   硝子棚:持っている物と、つぎに増える物を並べる
+   ------------------------------------------------------------
+   まだ手に入っていない物も、灰色で「あと何窓か」を添えて見せる。
+   何が待っているか見えるほうが、次の窓を引く手が動く
+   ============================================================ */
+const shelfEl = document.getElementById("shelf");
+const shelfTallyEl = document.getElementById("shelf-tally");
+const shelfColorsEl = document.getElementById("shelf-colors");
+const shelfFramesEl = document.getElementById("shelf-frames");
+
+function buildShelf() {
+  const next = nextUnlock(cleared);
+  shelfTallyEl.innerHTML =
+    `仕上げた窓 <b>${cleared}</b><br>` +
+    (next
+      ? `つぎは ${next.kind === "frame" ? "木枠" : "硝子"}「${next.name}」 ・ あと <b>${next.left}</b> 窓`
+      : "棚はすべて埋まりました");
+
+  shelfColorsEl.textContent = "";
+  for (const fam of COLOR_FAMILIES) {
+    const open = fam.at <= cleared;
+    const el = document.createElement("div");
+    el.className = "shelf-item" + (open ? "" : " locked");
+    const disc = document.createElement("div");
+    disc.className = "disc";
+    disc.style.background = shadeDisc(fam);
+    el.appendChild(disc);
+    el.appendChild(document.createTextNode(open ? fam.name : `${fam.at}窓`));
+    shelfColorsEl.appendChild(el);
+  }
+
+  shelfFramesEl.textContent = "";
+  for (const f of FRAMES) {
+    const open = f.at <= cleared;
+    const el = document.createElement("div");
+    el.className = "shelf-item" + (open ? " pickable" : " locked") +
+      (f.key === frameKey ? " picked" : "");
+    const bar = document.createElement("div");
+    bar.className = "bar";
+    bar.style.background =
+      `linear-gradient(135deg, ${f.wood[0]}, ${f.wood[1]} 50%, ${f.wood[2]})`;
+    el.appendChild(bar);
+    el.appendChild(document.createTextNode(open ? f.name : `${f.at}窓`));
+    if (open) {
+      el.addEventListener("click", () => {
+        frameKey = f.key;
+        saveProgress();
+        buildShelf();
+      });
+    }
+    shelfFramesEl.appendChild(el);
+  }
+}
+
+document.getElementById("shelf-open").addEventListener("click", () => {
+  buildShelf();
+  shelfEl.hidden = false;
+});
+document.getElementById("shelf-close").addEventListener("click", () => {
+  shelfEl.hidden = true;
+});
+
+const unlockEl = document.getElementById("unlock");
+let unlockTimer = null;
+
 restoreSaved();
+rebuildSwatches();   /* 帯の高さは中身で決まる。窓を組む前に並べておく */
+resize();
 showTitle();
 requestAnimationFrame(frame);
 
@@ -1231,6 +1506,9 @@ window.__app = {
   tapCell,
   paintAlong,
   saveKey: SAVE_KEY,
+  /* 硝子棚のようす */
+  cleared: () => cleared,
+  frame: () => frameKey,
   sweeping: () => lightSweep !== null,
   asking: () => !document.getElementById("ask").hidden,
   /* 音を鳴らさずに全部埋める(完成時の見た目だけ確かめたい時) */
