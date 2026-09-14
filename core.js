@@ -474,17 +474,34 @@
      ============================================================ */
   const PANEL_R = 0.62;   /* 手作り枠の窓は縦長で固定。1枚を正方形に近づける時に使う */
 
-  /* 細かさを振った候補の中から、枚数が目標にいちばん近いものを選ぶ */
-  function closestTo(target, from, to, make) {
+  /* 細かさを振った候補の中から、枚数が目標にいちばん近いものを選ぶ。
+     keep を渡すと、それを満たす候補だけから選ぶ (全部だめなら無視して選ぶ) */
+  function closestTo(target, from, to, make, keep) {
     /* 目標を渡し忘れても、normal の細かさで作る(枠が出ないより良い) */
     const goal = Number.isFinite(target) ? target : DIFF_TARGET.normal;
     let best = null, bestErr = Infinity;
+    let any = null, anyErr = Infinity;
     for (let n = from; n <= to; n++) {
       const cells = make(n);
       const err = Math.abs(cells.length - goal);
+      if (err < anyErr) { anyErr = err; any = cells; }
+      if (keep && !keep(cells)) continue;
       if (err < bestErr) { bestErr = err; best = cells; }
     }
-    return best;
+    return best || any;
+  }
+
+  /* どのセルも指で押せる大きさか (ふつうのスマホでの窓を基準に)。
+     敷き詰めの文様は、格子が窓の縁で半端に切れると細かい破片が出る。
+     割り切れる細かさだけを使うための門番 */
+  function allTappable(cells) {
+    for (const c of cells) {
+      const xs = c.map(p => p[0]), ys = c.map(p => p[1]);
+      const w = (Math.max(...xs) - Math.min(...xs)) * FIT_PANEL.w;
+      const h = (Math.max(...ys) - Math.min(...ys)) * FIT_PANEL.h;
+      if (Math.min(w, h) < TAP_MIN_PX) return false;
+    }
+    return true;
   }
 
   /* 縦 n 段に対する横の列数(画面上で1枚が正方形に近くなる) */
@@ -500,6 +517,71 @@
   };
 
   const HANDMADE = [
+
+    /* ------------------------------------------------------------
+       実在の文様。ここから下の2つは「分割」ではなく「敷き詰め」——
+       同じ形が噛み合って繰り返す。大正の洋館は和洋折衷なので、
+       組子の文様を硝子で組むのは、まさにあの時代の姿
+       ------------------------------------------------------------ */
+
+    /* 麻の葉。正三角の格子を敷き、三角ごとに重心から3頂点へ線を引く。
+       格子の頂点のまわりに細い三角が6枚集まって、六角の星になる。
+       横を列数で割り切ると、縁に出るのは「ちょうど半分の三角」だけで済む
+       (半端に切ると 17px の欠けらが残り、指で押せなくなる) */
+    { name: "Hemp Leaf", jp: "麻の葉", build(target) {
+        return closestTo(target, 2, 8, (cols) => {
+          const W = 1 / cols;                              /* 幅ぴったりに割る */
+          const rows = Math.max(1, Math.round(2 / (W * Math.sqrt(3) * PANEL_R)));
+          const H = 1 / rows;                              /* 高さもぴったりに */
+          const cells = [];
+          const inside = (p) => p[0] >= -1e-9 && p[0] <= 1 + 1e-9 &&
+                                p[1] >= -1e-9 && p[1] <= 1 + 1e-9;
+          /* 窓に収まる三角だけ、重心から3つに割る。縁にかかる三角は割らない
+             (割ると細かい破片になる。本物の窓も、文様は枠でそのまま切られる) */
+          const tri = (a, b, c) => {
+            if (inside(a) && inside(b) && inside(c)) {
+              const g = [(a[0] + b[0] + c[0]) / 3, (a[1] + b[1] + c[1]) / 3];
+              for (const [p, q] of [[a, b], [b, c], [c, a]]) cells.push([p, q, g]);
+              return;
+            }
+            const cell = clipToUnit([a, b, c]);
+            if (cell) cells.push(cell);
+          };
+          for (let r = 0; r < rows; r++) {
+            const y0 = r * H, y1 = (r + 1) * H, off = (r % 2) * (W / 2);
+            for (let k = -1; k <= cols; k++) {
+              const x = k * W + off;
+              tri([x, y0], [x + W, y0], [x + W / 2, y1]);
+              tri([x + W / 2, y1], [x + W * 1.5, y1], [x + W, y0]);
+            }
+          }
+          return cells;
+        }, allTappable);
+      } },
+
+    /* 亀甲。尖りを上下にした六角のつらなり。横を列数で割り切り、
+       縦は 3/4 ずつ送って一段おきに半個ずらすと、隙間なく噛み合う */
+    { name: "Tortoiseshell", jp: "亀甲", build(target) {
+        return closestTo(target, 2, 8, (cols) => {
+          const W = 1 / cols;                              /* 六角の幅 */
+          const hIdeal = W * 2 / (Math.sqrt(3) * PANEL_R); /* 画面の上で正六角 */
+          const rows = Math.max(1, Math.round(1 / (hIdeal * 0.75)));
+          const dy = 1 / rows, H = dy / 0.75;              /* 六角の高さ */
+          const cells = [];
+          for (let r = -1; r <= rows; r++) {
+            for (let k = -1; k <= cols; k++) {
+              const cx = k * W + (r % 2 ? W / 2 : 0);
+              const cy = H / 2 + r * dy;
+              const cell = clipToUnit([
+                [cx, cy - H / 2], [cx + W / 2, cy - H / 4], [cx + W / 2, cy + H / 4],
+                [cx, cy + H / 2], [cx - W / 2, cy + H / 4], [cx - W / 2, cy - H / 4],
+              ]);
+              if (cell) cells.push(cell);
+            }
+          }
+          return cells;
+        }, allTappable);
+      } },
 
     { name: "Checker", jp: "市松", build(target) {
         return closestTo(target, 1, 22, (n) => gridCells(colsFor(n), n));
@@ -796,14 +878,15 @@
   }
 
   const HANDMADE_BY_DIFF = {
-    veasy:  ["Checker", "Grand Diamond", "Three Diamonds", "Sunburst", "Brickwork",
-             "Diamond Lattice", "Chevron"],
-    easy:   ["Checker", "Grand Diamond", "Three Diamonds", "Columns", "Brickwork",
-             "Door Panel", "Diamond Lattice", "Wheel Window", "Chevron"],
-    normal: ["Checker", "Grand Diamond", "Three Diamonds", "Columns", "Brickwork",
-             "Door Panel", "Diamond Lattice", "Wheel Window", "Chevron"],
-    hard:   ["Checker", "Columns", "Brickwork", "Diamond Lattice", "Chevron"],
-    vhard:  ["Checker", "Columns", "Diamond Lattice", "Chevron"],
+    veasy:  ["Tortoiseshell", "Checker", "Grand Diamond", "Three Diamonds", "Sunburst",
+             "Brickwork", "Diamond Lattice", "Chevron"],
+    easy:   ["Tortoiseshell", "Checker", "Grand Diamond", "Three Diamonds", "Columns",
+             "Brickwork", "Door Panel", "Diamond Lattice", "Wheel Window", "Chevron"],
+    normal: ["Hemp Leaf", "Tortoiseshell", "Checker", "Grand Diamond", "Three Diamonds",
+             "Columns", "Brickwork", "Door Panel", "Diamond Lattice", "Wheel Window",
+             "Chevron"],
+    hard:   ["Hemp Leaf", "Checker", "Columns", "Brickwork", "Diamond Lattice", "Chevron"],
+    vhard:  ["Hemp Leaf", "Checker", "Columns", "Diamond Lattice", "Chevron"],
   };
 
   /* ============================================================

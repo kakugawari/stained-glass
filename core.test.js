@@ -718,8 +718,8 @@ test('曲げても、押せる大きさのセルが痩せない', () => {
 
 /* ---------- 手作り枠 ---------- */
 
-test('手作り枠10種は、どの細かさでも窓を埋め尽くす', () => {
-  assert.strictEqual(C.HANDMADE.length, 10);
+test('手作り枠は、どの細かさでも窓を埋め尽くす', () => {
+  assert.ok(C.HANDMADE.length >= 10, `手作り枠が ${C.HANDMADE.length} 種しかない`);
   for (const frame of C.HANDMADE) {
     for (const diff of DIFFS) {
       const cells = frame.build(C.DIFF_TARGET[diff]);
@@ -744,10 +744,57 @@ test('手作り枠は、目標の枚数に合わせて細かさが変わる', ()
       assert.ok(n >= prev, `${frame.name}: ${diff} で枚数が減った (${prev} → ${n})`);
       prev = n;
     }
-    /* easy と vhard で、はっきり差が出ること */
-    const easy = frame.build(C.DIFF_TARGET.easy).length;
-    const vhard = frame.build(C.DIFF_TARGET.vhard).length;
-    assert.ok(vhard >= easy * 3, `${frame.name}: easy ${easy} 枚 → vhard ${vhard} 枚 では差が小さい`);
+    /* どの枠も、どこかの難易度には出せること */
+    const at = DIFFS.filter(d => C.HANDMADE_BY_DIFF[d].includes(frame.name));
+    assert.ok(at.length > 0, `${frame.name}: どの難易度にも出せない`);
+
+    /* 端から端まで出る枠は、はっきり差が出ること。
+       敷き詰めの文様 (麻の葉・亀甲) は、指で押せる細かさに天井と床があるので
+       全部の段には出ない。その枠は、出る段のあいだで帯に収まっていればよい
+       (「難易度に混ぜる手作り枠の表が…」のテストが見ている) */
+    if (at.includes('easy') && at.includes('vhard')) {
+      const easy = frame.build(C.DIFF_TARGET.easy).length;
+      const vhard = frame.build(C.DIFF_TARGET.vhard).length;
+      assert.ok(vhard >= easy * 3,
+        `${frame.name}: easy ${easy} 枚 → vhard ${vhard} 枚 では差が小さい`);
+    }
+  }
+});
+
+test('敷き詰めの文様は、隙間なく噛み合い、どのセルも押せる', () => {
+  /* 麻の葉・亀甲は「分割」ではなく「敷き詰め」。同じ形が繰り返し噛み合う。
+     格子を窓の幅・高さで割り切っているので、縁に欠けらが残らない */
+  for (const name of ['Hemp Leaf', 'Tortoiseshell']) {
+    const frame = C.HANDMADE.find(f => f.name === name);
+    assert.ok(frame, `${name} が無い`);
+    const at = DIFFS.filter(d => C.HANDMADE_BY_DIFF[d].includes(name));
+    assert.ok(at.length >= 3, `${frame.jp}: 出せる段が ${at.length} しかない`);
+    for (const diff of at) {
+      const cells = frame.build(C.DIFF_TARGET[diff]);
+      assert.ok(Math.abs(sumArea(cells) - 1) < 1e-9,
+        `${frame.jp} (${diff}): 面積の合計が ${sumArea(cells).toFixed(6)}`);
+      for (const cell of cells) {
+        const b = bbox(cell);
+        const w = (b.u1 - b.u0) * C.FIT_PANEL.w, h = (b.v1 - b.v0) * C.FIT_PANEL.h;
+        assert.ok(Math.min(w, h) >= C.TAP_MIN_PX,
+          `${frame.jp} (${diff}): ${w.toFixed(1)}x${h.toFixed(1)}px の欠けらが残った`);
+      }
+      /* 適当な点をとると、必ずちょうど1枚に入る(隙間も重なりも無い) */
+      for (let k = 0; k < 40; k++) {
+        const u = Math.random(), v = Math.random();
+        const hit = cells.filter(c => C.pointInPoly(u, v, c)).length;
+        assert.strictEqual(hit, 1,
+          `${frame.jp} (${diff}): (${u.toFixed(3)}, ${v.toFixed(3)}) が ${hit} 枚に入った`);
+      }
+    }
+  }
+});
+
+test('麻の葉と亀甲を合わせると、どの段にも実在の文様が出る', () => {
+  for (const diff of DIFFS) {
+    const pool = C.HANDMADE_BY_DIFF[diff];
+    assert.ok(pool.includes('Hemp Leaf') || pool.includes('Tortoiseshell'),
+      `${diff}: 敷き詰めの文様がひとつも出ない`);
   }
 });
 

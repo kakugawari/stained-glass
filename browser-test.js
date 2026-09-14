@@ -250,7 +250,18 @@ async function run() {
     const swipe = await phone.evaluate(async () => {
       const cv = document.getElementById('cv');
       const p = window.__app.state().panel;
-      const y = p.y + p.h * 0.5;
+      /* 窓によっては、まん中を横切っても2枚しか通らないことがある。
+         いちばん多くのセルを通る高さを選んで、なぞりをちゃんと試す */
+      let y = p.y + p.h * 0.5, bestN = -1;
+      for (let t = 1; t < 10; t++) {
+        const yy = p.y + p.h * t / 10;
+        const seen = new Set();
+        for (let i = 0; i <= 120; i++) {
+          const hit = window.__app.cellAtXY(p.x + 4 + (p.w - 8) * i / 120, yy);
+          if (hit >= 0) seen.add(window.__app.state().hosts[hit]);
+        }
+        if (seen.size > bestN) { bestN = seen.size; y = yy; }
+      }
       /* 外形はアーチや丸窓のこともある。窓の中に入った所から始める
          (窓の外から始めると、それは「光のはらい」になる) */
       let x0 = p.x + 4;
