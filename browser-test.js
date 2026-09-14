@@ -5,6 +5,8 @@
  *
  * 画面まわりの不具合は node のテストでは捕まらない。ここでは本物の
  * ブラウザ(iPhone の画面サイズ)を立ち上げ、指の操作をそのまま再現する。
+ * 測るのは、実際に遊んでいる端末 (iPhone 16 Plus) と、
+ * いちばん狭い画面 (iPhone SE) の2つ。
  *
  * 直した不具合には、かならず見張り役をここに置くこと。
  */
@@ -17,6 +19,12 @@ const PORT = Number(process.env.PORT || 8123);
 const URL = `http://localhost:${PORT}/`;
 const ROOT = __dirname;
 const CHROMIUM = process.env.CHROMIUM_PATH;   // 手元の Chromium を使いたいとき
+
+/* ここで測る端末。
+   PHONE … 実際に遊んでいる端末。数字はこの画面のものを載せる
+   SMALL … いちばん狭い画面。ここで壊れなければ、たいていの端末で壊れない */
+const PHONE = 'iPhone 16 Plus';   // 430 x 739
+const SMALL = 'iPhone SE';        // 320 x 568
 
 let passed = 0;
 let failed = 0;
@@ -102,7 +110,7 @@ async function run() {
   try {
     // ------------------------------------------------ スマホで開く
     section('スマホで開く');
-    const context = await browser.newContext({ ...devices['iPhone 13'] });
+    const context = await browser.newContext({ ...devices[PHONE] });
     const phone = await context.newPage();
     phone.on('pageerror', (e) => errors.push('スマホ: ' + e.message));
     phone.on('console', (m) => { if (m.type() === 'error') errors.push('スマホ: ' + m.text()); });
@@ -119,7 +127,7 @@ async function run() {
       'タイトル画面では色の帯を出さない');
 
     // 段を5つに増やしたので、小さい画面でも全部が見えて押せるか確かめる
-    const small = await browser.newContext({ ...devices['iPhone SE'] });
+    const small = await browser.newContext({ ...devices[SMALL] });
     const tiny = await small.newPage();
     tiny.on('pageerror', (e) => errors.push('小さい画面: ' + e.message));
     await tiny.goto(URL);
@@ -200,7 +208,7 @@ async function run() {
 
     // 画面の「n left」と中身が合っているか
     const shownRemain = (await phone.textContent('#remain')).trim();
-    ok(shownRemain === `${after.remain} left`,
+    ok(shownRemain === `のこり ${after.remain} 枚`,
       `のこり枚数の表示と中身が合う (画面「${shownRemain}」/ 中身 ${after.remain})`);
 
     // 押した場所が、狙ったセルに入っているか(座標のずれよけ)
@@ -327,6 +335,82 @@ async function run() {
     ok(flick.sweeping, '窓の外から速くはらうと、光の帯が走る');
     ok(flick.added === 0, 'そのはらいでは硝子が 1 枚も嵌まらない');
 
+    // ------------------------------------------------ 言葉づかい
+    section('言葉づかい');
+    // 難易度は「読んで決める言葉」。日本語で出ているか
+    const menu = await phone.evaluate(() => {
+      window.__app.showTitle();
+      return [...document.querySelectorAll('.start-btn[data-diff]')].map((el) => ({
+        key: el.dataset.diff,
+        name: el.querySelector('.name').textContent.trim(),
+        note: el.querySelector('.note').textContent.trim(),
+      }));
+    });
+    const kana = /^[ぁ-んァ-ヶ一-龠々ー]+$/;
+    /* 難易度は規則の唯一の例外。和語の語感が合わないので欧文のままにした。
+       ただし添え書きの枚数は日本語 */
+    ok(menu.every((m) => /^[a-z ]+$/.test(m.name)),
+      `難易度は欧文で出る (${menu.map((m) => m.name).join(' / ')})`);
+    ok(menu.every((m) => /^\d+枚$/.test(m.note)),
+      `枚数は日本語の数え方 (${menu.map((m) => m.note).join(' / ')})`);
+
+    // 窓の銘は「漢字の和名 + 小さな欧文」の二枚組
+    await start(phone, 'normal');
+    const plate = await phone.evaluate(() => {
+      const el = document.getElementById('frame-name');
+      const jp = el.querySelector('.jp'), en = el.querySelector('.en');
+      const sJp = getComputedStyle(jp), sEn = getComputedStyle(en);
+      return { jp: jp.textContent.trim(), en: en.textContent.trim(),
+               jpSize: parseFloat(sJp.fontSize), enSize: parseFloat(sEn.fontSize),
+               shown: el.classList.contains('show') };
+    });
+    ok(plate.shown && kana.test(plate.jp.replace(/[─\s]/g, '')),
+      `窓の銘が和名で出る (${plate.jp})`);
+    ok(/^[A-Z ]+$/.test(plate.en) && plate.enSize < plate.jpSize,
+      `欧文は添え名として小さく出る (${plate.en} / ${plate.enSize}px < ${plate.jpSize}px)`);
+
+    // 二段にしたぶん、銘が窓にかぶっていないか
+    const clear = await phone.evaluate(() => {
+      const r = document.getElementById('frame-name').getBoundingClientRect();
+      const p = window.__app.state().panel;
+      return { bottom: Math.round(r.bottom), top: Math.round(p.y) };
+    });
+    ok(clear.bottom <= clear.top,
+      `銘が窓にかぶらない (銘の下端 ${clear.bottom}px / 窓の上端 ${clear.top}px)`);
+
+    // のこり枚数も日本語
+    await phone.evaluate(() => {
+      const c = window.__app.cellCenter(0); window.__app.tapCell(c.x, c.y);
+    });
+    await phone.waitForTimeout(80);
+    const remainText = (await phone.textContent('#remain')).trim();
+    ok(/^のこり \d+ 枚$/.test(remainText), `のこり枚数も日本語 (${remainText})`);
+
+    // 画面に出ている言葉に、英語の取り残しが無いか
+    const strays = await phone.evaluate(() => {
+      /* 欧文が出てよいのは2か所だけ。ここに挙がっていない英語が画面に
+         出ていたら、規則から漏れている */
+      const allowed = ['#frame-name .en',            /* 窓の銘の添え名 */
+                       '.start-btn[data-diff] .name']; /* 難易度(唯一の例外) */
+      const out = [];
+      const walk = (n) => {
+        if (n.nodeType === 3) {
+          const t = n.textContent.trim();
+          if (t && /[A-Za-z]/.test(t) &&
+              !allowed.some((sel) => n.parentElement.closest(sel))) out.push(t);
+          return;
+        }
+        if (n.nodeType !== 1 || n.hidden) return;
+        const st = getComputedStyle(n);
+        if (st.display === 'none' || st.opacity === '0') return;   /* 消えかけも数えない */
+        for (const c of n.childNodes) walk(c);
+      };
+      walk(document.body);
+      return out;
+    });
+    ok(strays.length === 0,
+      `決めた2か所のほかに英語が出ていない${strays.length ? ' — ' + strays.join(' / ') : ''}`);
+
     // ------------------------------------------------ 色を選ぶ帯
     section('色を選ぶ帯');
     const barMetrics = await phone.evaluate(() => {
@@ -366,11 +450,52 @@ async function run() {
     });
     ok(pick.ok, `選んだ色「${pick.name}」の硝子が嵌まる (${pick.got})`);
 
-    // 帯からはみ出す数になっても、なぞって出せる
-    ok(await phone.evaluate(() => {
+    // 色は二段に並び、全部が見えている(なぞらずに押せる)
+    const rows = await phone.evaluate(() => {
+      const sw = [...document.querySelectorAll('.swatch')];
+      const tops = [...new Set(sw.map((e) => Math.round(e.getBoundingClientRect().top)))];
       const row = document.getElementById('swatches');
-      return getComputedStyle(row).overflowX === 'auto';
-    }), '色が増えて入りきらない時は、なぞって出せる');
+      const r = row.getBoundingClientRect();
+      const outside = sw.filter((e) => {
+        const b = e.getBoundingClientRect();
+        return b.left < r.left - 1 || b.right > r.right + 1 ||
+               b.top < r.top - 1 || b.bottom > r.bottom + 1;
+      }).length;
+      return { n: sw.length, lines: tops.length, outside,
+               scrollable: row.scrollWidth > row.clientWidth + 1 };
+    });
+    ok(rows.lines === 2, `色は二段に並ぶ (${rows.n} 色 / ${rows.lines} 段)`);
+    ok(rows.outside === 0 && !rows.scrollable,
+      `どの色も帯の中に見えている (はみ出し ${rows.outside} 個)`);
+
+    // 20色そろっても、全部が見えていて、押せる大きさを割らないか
+    await phone.evaluate(() => {
+      localStorage.setItem('stained-glass:progress',
+        JSON.stringify({ cleared: 40, frame: 'kokutan' }));
+    });
+    await phone.reload();
+    await phone.waitForFunction(() => window.__app);
+    await start(phone, 'normal');
+    const full = await phone.evaluate(() => {
+      const sw = [...document.querySelectorAll('.swatch')];
+      const tops = [...new Set(sw.map((e) => Math.round(e.getBoundingClientRect().top)))];
+      const row = document.getElementById('swatches').getBoundingClientRect();
+      const outside = sw.filter((e) => {
+        const b = e.getBoundingClientRect();
+        return b.left < row.left - 1 || b.right > row.right + 1;
+      }).length;
+      return { n: sw.length, lines: tops.length, outside,
+               tap: Math.round(sw[0].getBoundingClientRect().width) };
+    });
+    ok(full.n === 20 && full.outside === 0,
+      `色が 20 になっても全部見えている (${full.lines} 段 / はみ出し ${full.outside} 個)`);
+    /* 詰まってきたら丸は小さくなるが、32px は割らない (割るなら段を増やす) */
+    ok(full.tap >= 32, `詰まっても押せる大きさを割らない (${full.tap}px)`);
+    ok(full.lines <= 3, `段が増えても三段まで (${full.lines} 段)`);
+    await phone.evaluate(() => localStorage.removeItem('stained-glass:progress'));
+    await phone.reload();
+    await phone.waitForFunction(() => window.__app);
+    await start(phone, 'normal');
 
     // ------------------------------------------------ 硝子棚
     section('硝子棚');
@@ -747,7 +872,7 @@ async function run() {
 
     // ------------------------------------------------ 更新とオフライン
     section('更新とオフライン');
-    const swCtx = await browser.newContext({ ...devices['iPhone 13'] });
+    const swCtx = await browser.newContext({ ...devices[PHONE] });
     const swPage = await swCtx.newPage();
     await swPage.goto(URL);
     await swPage.waitForFunction(() => window.__app);

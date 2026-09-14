@@ -412,13 +412,13 @@
      窓の外形 5種(単位座標のポリゴン。縦横比は外形ごとに違う)
      ============================================================ */
   const WINDOW_SHAPES = [
-    { key: "rect", name: "Tall Window", ratio: 0.62,
+    { key: "rect", name: "Tall Window", jp: "竪長窓", ratio: 0.62,
       poly() { return UNIT_RECT; } },
 
-    { key: "square", name: "Square Window", ratio: 1.0,
+    { key: "square", name: "Square Window", jp: "角窓", ratio: 1.0,
       poly() { return UNIT_RECT; } },
 
-    { key: "round", name: "Arched Window", ratio: 0.60,
+    { key: "round", name: "Arched Window", jp: "半円窓", ratio: 0.60,
       poly() {
         /* 上が半円のロマネスク窓。画面上で真円弧になるよう縦横比で補正 */
         const r = this.ratio;
@@ -432,7 +432,7 @@
         return pts;
       } },
 
-    { key: "gothic", name: "Gothic Window", ratio: 0.58,
+    { key: "gothic", name: "Gothic Window", jp: "尖塔窓", ratio: 0.58,
       poly() {
         /* 上が尖るゴシック窓。左右の大きな弧が頂点で出会う */
         const r = this.ratio;
@@ -452,7 +452,7 @@
         return pts;
       } },
 
-    { key: "circle", name: "Rose Window", ratio: 1.0,
+    { key: "circle", name: "Rose Window", jp: "薔薇窓", ratio: 1.0,
       poly() {
         const pts = [];
         for (let i = 0; i < 28; i++) {
@@ -501,11 +501,11 @@
 
   const HANDMADE = [
 
-    { name: "Checker", build(target) {
+    { name: "Checker", jp: "市松", build(target) {
         return closestTo(target, 1, 22, (n) => gridCells(colsFor(n), n));
       } },
 
-    { name: "Grand Diamond", build(target) {
+    { name: "Grand Diamond", jp: "大菱", build(target) {
         /* 縁取りの中に大きな菱形。細かい時は菱形をいくつも並べる */
         const make = (rows) => {
           const cols = colsFor(rows, 1);
@@ -531,7 +531,7 @@
         return closestTo(target, 1, 8, make);
       } },
 
-    { name: "Three Diamonds", build(target) {
+    { name: "Three Diamonds", jp: "三つ菱", build(target) {
         /* 両脇に細い帯、その内側に菱形を並べる */
         const make = (rows) => {
           const cols = colsFor(rows, 1);
@@ -553,7 +553,7 @@
         return closestTo(target, 1, 8, make);
       } },
 
-    { name: "Sunburst", build(target) {
+    { name: "Sunburst", jp: "光芒", build(target) {
         /* 窓の下辺を中心に、扇が広がる */
         const make = (n) => {
           const N = Math.max(3, n);
@@ -583,7 +583,7 @@
         return closestTo(target, 3, 20, make);
       } },
 
-    { name: "Columns", build(target) {
+    { name: "Columns", jp: "列柱", build(target) {
         /* 縦の柱。隣り合う柱で継ぎ目をずらす */
         const make = (cols) => {
           const rows = rowsFor(cols);
@@ -600,7 +600,7 @@
         return closestTo(target, 2, 14, make);
       } },
 
-    { name: "Brickwork", build(target) {
+    { name: "Brickwork", jp: "煉瓦", build(target) {
         /* 煉瓦積み。一段おきに半分ずらす */
         const make = (rows) => {
           const cols = colsFor(rows);
@@ -619,7 +619,7 @@
         return closestTo(target, 1, 20, make);
       } },
 
-    { name: "Door Panel", build(target) {
+    { name: "Door Panel", jp: "扉板", build(target) {
         /* 上は素直な格子、下は菱形。扉の硝子のような割り */
         const make = (rows) => {
           const cols = colsFor(rows, 1);
@@ -654,7 +654,7 @@
         return closestTo(target, 1, 8, make);
       } },
 
-    { name: "Diamond Lattice", build(target) {
+    { name: "Diamond Lattice", jp: "菱格子", build(target) {
         /* 菱形の格子 */
         const make = (cols) => {
           const rows = rowsFor(cols);
@@ -673,7 +673,7 @@
         return closestTo(target, 2, 16, make);
       } },
 
-    { name: "Wheel Window", build(target) {
+    { name: "Wheel Window", jp: "車輪窓", build(target) {
         /* 四辺に接する楕円+車輪状の割り+四隅 */
         const make = (n) => {
           const SEC = clamp(n * 2, 6, 28);
@@ -711,7 +711,7 @@
         return closestTo(target, 3, 14, make);
       } },
 
-    { name: "Chevron", build(target) {
+    { name: "Chevron", jp: "山形", build(target) {
         /* 山形の帯を積む */
         const make = (bands) => {
           const cols = Math.max(3, Math.round(bands * 1.6));
