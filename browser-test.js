@@ -5,6 +5,8 @@
  *
  * 画面まわりの不具合は node のテストでは捕まらない。ここでは本物の
  * ブラウザ(iPhone の画面サイズ)を立ち上げ、指の操作をそのまま再現する。
+ * 測るのは、実際に遊んでいる端末 (iPhone 16 Plus) と、
+ * いちばん狭い画面 (iPhone SE) の2つ。
  *
  * 直した不具合には、かならず見張り役をここに置くこと。
  */
@@ -17,6 +19,12 @@ const PORT = Number(process.env.PORT || 8123);
 const URL = `http://localhost:${PORT}/`;
 const ROOT = __dirname;
 const CHROMIUM = process.env.CHROMIUM_PATH;   // 手元の Chromium を使いたいとき
+
+/* ここで測る端末。
+   PHONE … 実際に遊んでいる端末。数字はこの画面のものを載せる
+   SMALL … いちばん狭い画面。ここで壊れなければ、たいていの端末で壊れない */
+const PHONE = 'iPhone 16 Plus';   // 430 x 739
+const SMALL = 'iPhone SE';        // 320 x 568
 
 let passed = 0;
 let failed = 0;
@@ -102,7 +110,7 @@ async function run() {
   try {
     // ------------------------------------------------ スマホで開く
     section('スマホで開く');
-    const context = await browser.newContext({ ...devices['iPhone 13'] });
+    const context = await browser.newContext({ ...devices[PHONE] });
     const phone = await context.newPage();
     phone.on('pageerror', (e) => errors.push('スマホ: ' + e.message));
     phone.on('console', (m) => { if (m.type() === 'error') errors.push('スマホ: ' + m.text()); });
@@ -119,7 +127,7 @@ async function run() {
       'タイトル画面では色の帯を出さない');
 
     // 段を5つに増やしたので、小さい画面でも全部が見えて押せるか確かめる
-    const small = await browser.newContext({ ...devices['iPhone SE'] });
+    const small = await browser.newContext({ ...devices[SMALL] });
     const tiny = await small.newPage();
     tiny.on('pageerror', (e) => errors.push('小さい画面: ' + e.message));
     await tiny.goto(URL);
@@ -864,7 +872,7 @@ async function run() {
 
     // ------------------------------------------------ 更新とオフライン
     section('更新とオフライン');
-    const swCtx = await browser.newContext({ ...devices['iPhone 13'] });
+    const swCtx = await browser.newContext({ ...devices[PHONE] });
     const swPage = await swCtx.newPage();
     await swPage.goto(URL);
     await swPage.waitForFunction(() => window.__app);
