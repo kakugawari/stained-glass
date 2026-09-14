@@ -49,6 +49,28 @@ function waitForServer() {
   });
 }
 
+/* タイトル画面で難易度を選び、遊ぶ画面に入る */
+async function start(page, diff) {
+  if (await page.evaluate(() => window.__app.screen()) === 'play') {
+    await page.locator('#to-title').tap();
+    await page.waitForTimeout(80);
+  }
+  await page.locator(`.start-btn[data-diff="${diff}"]`).tap();
+  await page.waitForTimeout(120);
+  if (await page.evaluate(() => window.__app.asking())) {
+    await page.locator('#ask-yes').tap();
+    await page.waitForTimeout(150);
+  }
+  await page.waitForFunction(() => window.__app.screen() === 'play'
+    && window.__app.state().cells.length > 0);
+}
+
+/* 遊ぶ画面のまま、窓だけ引き直す(アプリ本体と同じ道) */
+async function draw(page, diff) {
+  await page.evaluate((d) => window.__app.newWindow(d), diff);
+  await page.waitForTimeout(60);
+}
+
 /* i 番目のセルの真ん中を、指で押す */
 async function tapCell(page, i) {
   const at = await page.evaluate((k) => window.__app.cellCenter(k), i);
@@ -85,13 +107,24 @@ async function run() {
     phone.on('pageerror', (e) => errors.push('スマホ: ' + e.message));
     phone.on('console', (m) => { if (m.type() === 'error') errors.push('スマホ: ' + m.text()); });
     await phone.goto(URL);
-    await phone.waitForFunction(() => window.__app && window.__app.state().cells.length > 0);
-    ok(true, 'ページが開いて、窓が組み上がる');
+    await phone.waitForFunction(() => window.__app);
+    ok(await phone.evaluate(() => window.__app.screen()) === 'title', '開くとタイトル画面が出る');
+    ok(await phone.evaluate(() => {
+      const r = document.getElementById('start-icon').getBoundingClientRect();
+      return r.width > 80 && r.height > 80;
+    }), 'アイコンが出ている');
+    ok(await phone.evaluate(() => document.getElementById('go-resume').hidden),
+      'まっさらな時は「つづきから」を出さない');
+    ok(await phone.evaluate(() => document.getElementById('bar').hidden),
+      'タイトル画面では色の帯を出さない');
+
+    await start(phone, 'normal');
+    ok(true, '難易度を選ぶと窓が組み上がる');
 
     const fit = await phone.evaluate(() => ({
       wide: document.documentElement.scrollWidth - document.documentElement.clientWidth,
       tall: document.documentElement.scrollHeight - document.documentElement.clientHeight,
-      title: document.getElementById('title').textContent.trim()
+      title: document.getElementById('start-sub').textContent.trim()
     }));
     ok(fit.wide <= 1, 'スマホ幅で横スクロールが出ない');
     ok(fit.tall <= 1, '縦にもはみ出さない(1画面に収まる)');
@@ -156,8 +189,7 @@ async function run() {
 
     // ------------------------------------------------ なぞって塗る
     section('なぞって塗る');
-    await phone.locator('#btn-normal').tap();
-    await phone.waitForTimeout(120);
+    await draw(phone, 'normal');
 
     // 窓を横切ってなぞると、通った道が塗れる
     const swipe = await phone.evaluate(async () => {
@@ -233,9 +265,19 @@ async function run() {
     const keptFilled = kept.fills.filter((f) => f !== null).length;
     await phone.reload();
     await phone.waitForFunction(() => window.__app && window.__app.state().cells.length > 0);
+    ok(await phone.evaluate(() => window.__app.screen()) === 'title',
+      '開き直すとタイトルから始まる');
+    ok(!(await phone.evaluate(() => document.getElementById('go-resume').hidden)),
+      '塗りかけがあると「つづきから」が出る');
+    ok((await phone.textContent('#resume-note')).includes(String(kept.remain)),
+      `「つづきから」にのこり枚数が出る (${(await phone.textContent('#resume-note')).trim()})`);
+
+    await phone.locator('#go-resume').tap();
+    await phone.waitForTimeout(250);
     const back = await state(phone);
-    ok(back.fills.filter((f) => f !== null).length === keptFilled && keptFilled > 0,
-      `開き直しても塗りかけが残る (${keptFilled} 枚)`);
+    ok(await phone.evaluate(() => window.__app.screen()) === 'play' &&
+       back.fills.filter((f) => f !== null).length === keptFilled && keptFilled > 0,
+      `つづきからで、塗りかけの窓に戻る (${keptFilled} 枚)`);
     let worstGap = 0;
     let sameShape = back.cells.length === kept.cells.length;
     for (let i = 0; sameShape && i < kept.cells.length; i++) {
@@ -250,49 +292,58 @@ async function run() {
       `窓の割り方もそのまま戻る (ずれ ${(worstGap * 100).toFixed(4)}% 以内)`);
     ok(back.remain === kept.remain, `のこり枚数もそのまま (${back.remain})`);
 
-    // 塗りかけのまま難易度を押したら、黙って消さずに一度聞く
-    await phone.locator('#btn-hard').tap();
-    await phone.waitForTimeout(80);
+    // もどる → タイトル
+    await phone.locator('#to-title').tap();
+    await phone.waitForTimeout(150);
+    ok(await phone.evaluate(() => window.__app.screen()) === 'title', 'もどるでタイトルに戻れる');
+
+    // 塗りかけのままタイトルで難易度を選んだら、黙って消さずに一度聞く
+    await phone.locator('.start-btn[data-diff="hard"]').tap();
+    await phone.waitForTimeout(100);
     ok(await phone.evaluate(() => window.__app.asking()), '塗りかけを消す前に一度聞く');
     const during = await state(phone);
     ok(JSON.stringify(during.cells) === JSON.stringify(back.cells), '聞いている間は窓を変えない');
 
     // 「やめる」なら、そのまま
     await phone.locator('#ask-no').tap();
-    await phone.waitForTimeout(80);
+    await phone.waitForTimeout(100);
     const stay = await state(phone);
     ok(!(await phone.evaluate(() => window.__app.asking())) &&
        stay.fills.filter((f) => f !== null).length === keptFilled,
       'やめると、塗りかけはそのまま');
 
-    // 「引き直す」なら新しい窓
-    await phone.locator('#btn-hard').tap();
-    await phone.waitForTimeout(80);
+    // 「新しく始める」なら新しい窓で、遊ぶ画面に入る
+    await phone.locator('.start-btn[data-diff="hard"]').tap();
+    await phone.waitForTimeout(100);
     await phone.locator('#ask-yes').tap();
-    await phone.waitForTimeout(120);
+    await phone.waitForTimeout(200);
     const fresh = await state(phone);
-    ok(fresh.fills.every((f) => f === null) && fresh.cells.length > stay.cells.length,
-      `引き直すと新しい窓になる (${fresh.cells.length} 枚)`);
+    ok(fresh.fills.every((f) => f === null) && fresh.cells.length > stay.cells.length &&
+       await phone.evaluate(() => window.__app.screen()) === 'play',
+      `新しく始めると、その難易度の窓になる (${fresh.cells.length} 枚)`);
 
     // 手つかずの窓なら、いちいち聞かない
-    await phone.locator('#btn-easy').tap();
+    await phone.locator('#to-title').tap();
     await phone.waitForTimeout(120);
-    ok(!(await phone.evaluate(() => window.__app.asking())),
-      '手つかずの窓を引き直す時は聞かない');
+    await phone.locator('.start-btn[data-diff="easy"]').tap();
+    await phone.waitForTimeout(150);
+    ok(!(await phone.evaluate(() => window.__app.asking())) &&
+       await phone.evaluate(() => window.__app.screen()) === 'play',
+      '手つかずの窓なら、聞かずに始まる');
 
     // 壊れたものがしまってあっても、落ちずに開ける
     await phone.evaluate(() => localStorage.setItem(window.__app.saveKey, '{壊れている'));
     await phone.reload();
-    await phone.waitForFunction(() => window.__app && window.__app.state().cells.length > 0);
-    ok(true, '壊れたものがしまってあっても、普通に開ける');
+    await phone.waitForFunction(() => window.__app);
+    ok(await phone.evaluate(() => window.__app.screen()) === 'title',
+      '壊れたものがしまってあっても、普通にタイトルが出る');
+    await start(phone, 'normal');
 
     // ------------------------------------------------ 難易度
     section('難易度');
     const counts = {};
-    for (const [key, id] of [['easy', 'btn-easy'], ['normal', 'btn-normal'],
-                             ['hard', 'btn-hard'], ['vhard', 'btn-vhard']]) {
-      await phone.locator('#' + id).tap();
-      await phone.waitForTimeout(80);
+    for (const key of ['easy', 'normal', 'hard', 'vhard']) {
+      await draw(phone, key);
       const s = await state(phone);
       counts[key] = s.cells.length;
       ok(s.fills.every((f) => f === null), `${key}: 押すと新しい窓になる`);
@@ -320,12 +371,10 @@ async function run() {
 
     // 同じ難易度を引き直しても、手応えが別物にならないか
     // (以前は normal で 12 枚の窓と 48 枚の窓が出ていた)
-    for (const [key, id] of [['easy', 'btn-easy'], ['normal', 'btn-normal'],
-                             ['hard', 'btn-hard'], ['vhard', 'btn-vhard']]) {
+    for (const key of ['easy', 'normal', 'hard', 'vhard']) {
       const draws = [];
       for (let i = 0; i < 12; i++) {
-        await phone.locator('#' + id).tap();
-        await phone.waitForTimeout(40);
+        await draw(phone, key);
         const s = await state(phone);
         draws.push(s.hosts.filter((h, k) => h === k).length);
       }
@@ -346,8 +395,7 @@ async function run() {
 
     // ------------------------------------------------ 埋めきる
     section('埋めきる');
-    await phone.locator('#btn-easy').tap();
-    await phone.waitForTimeout(80);
+    await draw(phone, 'easy');
     const easy = await state(phone);
     for (let i = 0; i < easy.cells.length; i++) await tapCell(phone, i);
     const done = await state(phone);
@@ -358,8 +406,7 @@ async function run() {
     // ふちにかけらが出る窓(丸窓・アーチ・ゴシック)でも、押すだけで完成するか
     let withSlivers = null;
     for (let t = 0; t < 30 && !withSlivers; t++) {
-      await phone.locator('#btn-hard').tap();
-      await phone.waitForTimeout(60);
+      await draw(phone, 'hard');
       const s = await state(phone);
       if (s.hosts.some((h, i) => h !== i)) withSlivers = s;
     }
@@ -376,10 +423,9 @@ async function run() {
     }
 
     // 完成した窓から次へ行く時は、いちいち聞かない
-    await phone.locator('#btn-easy').tap();
-    await phone.waitForTimeout(120);
+    await draw(phone, 'easy');
     ok(!(await phone.evaluate(() => window.__app.asking())),
-      '完成したあと次の窓へ行く時は聞かない');
+      '完成したあと、次の窓へはそのまま行ける');
 
     // 完成後も描き続けて止まらないか
     const frames = await phone.evaluate(() => new Promise((resolve) => {
@@ -436,7 +482,7 @@ async function run() {
     // 直したものが 1 回のリロードで出るか (キャッシュ優先だと古い画面が出たまま)
     const indexPath = path.join(ROOT, 'index.html');
     const original = fs.readFileSync(indexPath, 'utf8');
-    const marker = '<div id="title">';
+    const marker = '<div id="start-sub">';
     const head = original.indexOf(marker) + marker.length;
     const tail = original.indexOf('</div>', head);
     fs.writeFileSync(indexPath,
@@ -445,7 +491,7 @@ async function run() {
     try {
       await swPage.reload();
       await swPage.waitForTimeout(400);
-      shown = (await swPage.textContent('#title')).trim();
+      shown = (await swPage.textContent('#start-sub')).trim();
     } finally {
       fs.writeFileSync(indexPath, original);
     }
@@ -454,7 +500,7 @@ async function run() {
     // 元に戻したものも、1 回のリロードで戻る
     await swPage.reload();
     await swPage.waitForTimeout(400);
-    ok((await swPage.textContent('#title')).trim() === 'Light the Glass',
+    ok((await swPage.textContent('#start-sub')).trim() === '硝子を嵌めて、窓に光を灯す',
       '元に戻したものも 1 回のリロードで戻る');
 
     // つながらなくても遊べるか
@@ -462,8 +508,8 @@ async function run() {
     await swCtx.setOffline(true);
     await swPage.reload().catch(() => {});
     await swPage.waitForTimeout(500);
-    ok(await swPage.evaluate(() => !!(window.__app && window.__app.state().cells.length)).catch(() => false),
-      'ネットにつながらなくても開けて、窓が組み上がる');
+    ok(await swPage.evaluate(() => !!(window.__app && window.__app.screen() === 'title')).catch(() => false),
+      'ネットにつながらなくても開けて、タイトルが出る');
     await swCtx.setOffline(false);
 
     section('エラー');

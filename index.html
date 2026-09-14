@@ -27,20 +27,74 @@
   }
   canvas { display: block; }
 
-  /* ===== 題:英語タイトル(上部中央に常時) ===== */
-  #title {
-    position: fixed; top: 16px; left: 50%;
-    transform: translateX(-50%);
-    color: rgba(215,200,170,0.8);
-    font-size: 15px; letter-spacing: 0.42em;
-    pointer-events: none;
-    text-shadow: 0 0 12px rgba(215,190,140,0.25);
-    white-space: nowrap;
+  /* ===== タイトル画面 ===== */
+  #start {
+    position: fixed; inset: 0;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 18px;
+    padding: 24px 20px calc(24px + env(safe-area-inset-bottom));
+    background:
+      radial-gradient(120% 80% at 50% 32%, rgba(70,52,30,0.55), rgba(12,10,8,0) 70%),
+      linear-gradient(to bottom, #201b15, #14110e 60%, #0c0a08);
+    z-index: 5;
+    transition: opacity 0.45s ease;
   }
+  #start[hidden] { display: none; }   /* ID 指定は [hidden] より強いので、必ず書く */
+  #start.fading { opacity: 0; pointer-events: none; }
 
-  /* ===== 枠の名前(タイトルの下にふわっと出る) ===== */
+  #start-icon {
+    width: min(46vw, 190px); height: auto;
+    border-radius: 22%;
+    box-shadow: 0 0 44px rgba(255,220,160,0.22), 0 10px 30px rgba(0,0,0,0.5);
+  }
+  #start-sub {
+    color: rgba(215,200,170,0.72);
+    font-size: 13px; letter-spacing: 0.28em;
+    text-shadow: 0 0 12px rgba(215,190,140,0.25);
+  }
+  #start-menu {
+    display: flex; flex-direction: column; gap: 9px;
+    width: min(86vw, 280px);
+  }
+  .start-btn {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
+    width: 100%; min-height: 48px;
+    padding: 11px 16px;
+    color: rgba(215,200,170,0.9);
+    background: rgba(28,23,18,0.75);
+    border: 1px solid rgba(215,200,170,0.28);
+    border-radius: 5px;
+    font-family: inherit; font-size: 15px; letter-spacing: 0.16em;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+  .start-btn:active { background: rgba(215,200,170,0.16); }
+  .start-btn .note {
+    font-size: 11px; letter-spacing: 0.1em;
+    color: rgba(215,200,170,0.5);
+  }
+  #go-resume {
+    border-color: rgba(255,225,160,0.65);
+    color: rgba(255,233,184,0.95);
+  }
+  #go-resume[hidden] { display: none; }
+
+  /* ===== タイトルへもどる ===== */
+  #to-title {
+    position: fixed; top: calc(8px + env(safe-area-inset-top)); left: 8px;
+    width: 40px; height: 40px;
+    display: flex; align-items: center; justify-content: center;
+    color: rgba(215,200,170,0.55);
+    background: none; border: none;
+    font-size: 20px; line-height: 1;
+    cursor: pointer; z-index: 3;
+  }
+  #to-title[hidden] { display: none; }
+  #to-title:active { color: rgba(255,233,184,0.95); }
+
+  /* ===== 枠の名前(上にふわっと出る) ===== */
   #frame-name {
-    position: fixed; top: 44px; left: 50%;
+    position: fixed; top: 14px; left: 50%;
     transform: translateX(-50%);
     color: rgba(215,200,170,0.85);
     font-size: 13px; letter-spacing: 0.3em;
@@ -69,11 +123,17 @@
     padding: 10px 8px calc(10px + env(safe-area-inset-bottom));
     background: linear-gradient(to top, rgba(10,8,6,0.88), rgba(10,8,6,0));
   }
-  /* ===== 引き直しの確認(操作帯の上に出る) ===== */
+  /* ID 指定は [hidden]{display:none} より強い。閉じている時は必ず消す */
+  #bar[hidden] { display: none; }
+  /* ===== 引き直しの確認(画面の下に出る) ===== */
   #ask {
+    position: fixed; left: 50%; bottom: calc(14px + env(safe-area-inset-bottom));
+    transform: translateX(-50%);
+    z-index: 6;
     display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
     justify-content: center;
-    padding: 8px 10px; margin-bottom: 2px;
+    max-width: min(92vw, 420px);
+    padding: 10px 12px;
     border: 1px solid rgba(215,200,170,0.22);
     border-radius: 6px;
     background: rgba(20,16,12,0.92);
@@ -136,23 +196,40 @@
 <body>
 
 <canvas id="cv"></canvas>
-<div id="title">Light the Glass</div>
 <div id="frame-name"></div>
 <div id="remain" class="hidden"></div>
+<button id="to-title" aria-label="タイトルへもどる" hidden>&#8592;</button>
 
 <div id="bar">
-  <div id="ask" hidden>
-    <span id="ask-text">塗りかけの窓を消して、引き直しますか？</span>
-    <button class="btn" id="ask-yes">引き直す</button>
-    <button class="btn" id="ask-no">やめる</button>
-  </div>
   <div id="swatches"></div>
-  <div id="buttons">
-    <button class="btn" id="btn-easy">easy</button>
-    <button class="btn" id="btn-normal">normal</button>
-    <button class="btn" id="btn-hard">hard</button>
-    <button class="btn" id="btn-vhard">very hard</button>
+</div>
+
+<div id="start">
+  <img id="start-icon" src="./icon-512.png" alt="ステンドグラス">
+  <div id="start-sub">硝子を嵌めて、窓に光を灯す</div>
+  <div id="start-menu">
+    <button class="start-btn" id="go-resume" hidden>
+      <span class="name">つづきから</span><span class="note" id="resume-note"></span>
+    </button>
+    <button class="start-btn" data-diff="easy">
+      <span class="name">easy</span><span class="note">10枚 ・ ひと息に</span>
+    </button>
+    <button class="start-btn" data-diff="normal">
+      <span class="name">normal</span><span class="note">40枚</span>
+    </button>
+    <button class="start-btn" data-diff="hard">
+      <span class="name">hard</span><span class="note">80枚</span>
+    </button>
+    <button class="start-btn" data-diff="vhard">
+      <span class="name">very hard</span><span class="note">140枚 ・ じっくり</span>
+    </button>
   </div>
+</div>
+
+<div id="ask" hidden>
+  <span id="ask-text">塗りかけの窓を消して、新しく始めますか？</span>
+  <button class="btn" id="ask-yes">新しく始める</button>
+  <button class="btn" id="ask-no">やめる</button>
 </div>
 
 <script>
@@ -196,9 +273,10 @@ let W = 0, H = 0, DPR = 1;
 let PX = 0, PY = 0, PW = 0, PH = 0;   /* パネルの位置と大きさ */
 let panelRatio = 0.62;                /* 現在の外形の幅/高さ */
 
-/* 窓のまわりに空けておく場所 */
-const TITLE_SPACE = 62;   /* 題と枠の名前のぶん(縦向き) */
-const EDGE = 12;          /* 画面のふちの余白 */
+/* 窓のまわりに空けておく場所。難易度はタイトル画面で選ぶので、
+   遊ぶ画面に残るのは枠の名前(上)と色の帯(下)だけ */
+const TITLE_SPACE = 30;   /* 枠の名前のぶん */
+const EDGE = 4;           /* 画面のふちの余白 */
 
 function layoutPanel() {
   /* 操作帯は、縦向きなら下・横向きなら右。実寸を見て、残りを窓に使う */
@@ -206,7 +284,7 @@ function layoutPanel() {
   const sideBar = bar.left > W / 2;               /* 右に寄っている = 横向きの並び */
   const barH = sideBar ? 0 : (bar.height || 84);
   const barW = sideBar ? bar.width : 0;
-  const top = W > H ? 34 : TITLE_SPACE;           /* 横向きは題を詰める */
+  const top = W > H ? 24 : TITLE_SPACE;           /* 横向きはさらに詰める */
   const availW = Math.max(80, W - barW - EDGE * 2);
   const availH = Math.max(80, H - top - barH - EDGE);
 
@@ -319,11 +397,6 @@ function updateRemain() {
 /* 難易度を選んで新しい窓を用意する */
 function newWindow(diffKey) {
   curDiff = diffKey;
-  /* ボタンの点灯 */
-  for (const [k, id] of Object.entries(DIFF_BTN)) {
-    document.getElementById(id).classList.toggle("active", k === diffKey);
-  }
-
   const pool = HANDMADE_BY_DIFF[diffKey];
   if (pool.length > 0 && Math.random() < 0.35) {
     /* 手作り枠(外形は縦長) */
@@ -368,10 +441,6 @@ function newWindow(diffKey) {
   redrawGlass();
   saveNow();
 }
-
-const DIFF_BTN = {
-  easy: "btn-easy", normal: "btn-normal", hard: "btn-hard", vhard: "btn-vhard",
-};
 
 /* ============================================================
    塗りかけの窓をしまう・取り出す
@@ -429,9 +498,6 @@ function restoreSaved() {
   for (let i = 0; i < swatchesEl.children.length; i++) {
     swatchesEl.children[i].classList.toggle("active", i === familyIdx);
   }
-  for (const [k, id] of Object.entries(DIFF_BTN)) {
-    document.getElementById(id).classList.toggle("active", k === curDiff);
-  }
   updateRemain();
   redrawGlass();
   return true;
@@ -460,18 +526,63 @@ function closeAsk() {
 document.getElementById("ask-yes").addEventListener("click", () => {
   const diff = pendingDiff;
   closeAsk();
-  if (diff) newWindow(diff);
+  if (!diff) return;
+  newWindow(diff);
+  enterPlay();
 });
 document.getElementById("ask-no").addEventListener("click", closeAsk);
-for (const [k, id] of Object.entries(DIFF_BTN)) {
-  document.getElementById(id).addEventListener("click", () => {
-    closeAsk();
-    /* 塗りかけ(まだ完成していないのに硝子が入っている)なら、消す前に一度聞く */
-    const touched = fills.some(f => f !== null);
-    if (touched && !completed) askRedraw(k);
-    else newWindow(k);
-  });
+/* ============================================================
+   タイトル画面と、遊ぶ画面の行き来
+   ------------------------------------------------------------
+   難易度はタイトルで選ぶ。遊ぶ画面には窓と色だけを残して、
+   硝子を画面いっぱいに見せる
+   ============================================================ */
+const startEl = document.getElementById("start");
+const barEl2 = document.getElementById("bar");
+const toTitleEl = document.getElementById("to-title");
+const resumeEl = document.getElementById("go-resume");
+const resumeNoteEl = document.getElementById("resume-note");
+let atTitle = true;
+
+function showTitle() {
+  atTitle = true;
+  closeAsk();
+  saveNow();
+  /* 塗りかけがあれば「つづきから」を出す */
+  const left = fills.filter((f, i) => f === null && hosts[i] === i).length;
+  const canResume = cells.length > 0 && !completed && fills.some(f => f !== null);
+  resumeEl.hidden = !canResume;
+  if (canResume) resumeNoteEl.textContent = `のこり ${left}`;
+  startEl.hidden = false;
+  startEl.classList.remove("fading");
+  barEl2.hidden = true;
+  toTitleEl.hidden = true;
+  remainEl.classList.add("hidden");
 }
+
+function enterPlay() {
+  atTitle = false;
+  startEl.classList.add("fading");
+  setTimeout(() => { if (!atTitle) startEl.hidden = true; }, 450);
+  barEl2.hidden = false;
+  toTitleEl.hidden = false;
+  resize();            /* 操作帯の高さが変わるので測り直す */
+  updateRemain();
+}
+
+function startNew(diffKey) {
+  /* 塗りかけがあれば、消す前に一度だけ聞く */
+  const touched = cells.length > 0 && !completed && fills.some(f => f !== null);
+  if (touched) { askRedraw(diffKey); return; }
+  newWindow(diffKey);
+  enterPlay();
+}
+
+for (const el of document.querySelectorAll(".start-btn[data-diff]")) {
+  el.addEventListener("click", () => startNew(el.dataset.diff));
+}
+resumeEl.addEventListener("click", () => enterPlay());
+toTitleEl.addEventListener("click", showTitle);
 
 /* ============================================================
    描画:セルをオフスクリーンに焼き込む(変化時のみ)
@@ -932,10 +1043,12 @@ function frame(now) {
 }
 
 /* ============================================================
-   起動:前の窓が残っていれば続きから。無ければ normal の窓から
+   起動:タイトル画面から。前の窓は読み込んでおき、
+   塗りかけなら「つづきから」を出す
    ============================================================ */
 resize();
-if (!restoreSaved()) newWindow("normal");
+restoreSaved();
+showTitle();
 requestAnimationFrame(frame);
 
 /* ============================================================
@@ -956,6 +1069,10 @@ window.__app = {
     return { x: ux(mid[0]), y: vy(mid[1]) };
   },
   newWindow,
+  /* いまどちらの画面か / 画面を移る(テストから) */
+  screen: () => (atTitle ? "title" : "play"),
+  showTitle: () => showTitle(),
+  enterPlay: () => enterPlay(),
   /* 見比べ用: 決まった枠をそのまま出す */
   setWindow: (list, shape, diff) => {
     curDiff = diff; curShape = shape.key; curHandmade = null;
