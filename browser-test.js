@@ -620,20 +620,24 @@ async function run() {
       const d = cv.getContext('2d').getImageData(4, 4, 1, 1).data;
       return [d[0], d[1], d[2]];
     });
-    ok(await phone.evaluate(() => window.__app.theme()) === 'day', '最初は白い壁');
-    const dayWall = await wallOf();
+    ok(await phone.evaluate(() => window.__app.theme()) === 'night', '最初は暗い部屋');
+    const nightWall = await wallOf();
     await phone.locator('#theme-toggle').tap();
     await phone.waitForTimeout(200);
-    const nightWall = await wallOf();
-    ok(await phone.evaluate(() => window.__app.theme()) === 'night' &&
-       nightWall[0] + nightWall[1] + nightWall[2] < dayWall[0] + dayWall[1] + dayWall[2] - 200,
-      `押すと暗い部屋になる (rgb(${dayWall}) → rgb(${nightWall}))`);
+    const dayWall = await wallOf();
+    ok(await phone.evaluate(() => window.__app.theme()) === 'day' &&
+       dayWall[0] + dayWall[1] + dayWall[2] > nightWall[0] + nightWall[1] + nightWall[2] + 200,
+      `押すと白い壁になる (rgb(${nightWall}) → rgb(${dayWall}))`);
     await phone.reload();
     await phone.waitForFunction(() => window.__app);
-    ok(await phone.evaluate(() => window.__app.theme()) === 'night', '選んだ壁は覚えている');
+    ok(await phone.evaluate(() => window.__app.theme()) === 'day', '選んだ壁は覚えている');
     await phone.locator('#theme-toggle').tap();
     await phone.waitForTimeout(200);
-    ok(await phone.evaluate(() => window.__app.theme()) === 'day', '白い壁に戻せる');
+    ok(await phone.evaluate(() => window.__app.theme()) === 'night', '暗い部屋に戻せる');
+    /* 画面の上の色 (iOS のステータスバーの地) も、壁と一緒に変わる */
+    ok(await phone.evaluate(() =>
+      document.querySelector('meta[name="theme-color"]').content.toLowerCase()) === '#14110e',
+      '画面の上の色も暗い部屋にそろう');
     await phone.locator('#go-resume').tap();
     await phone.waitForTimeout(250);
 
