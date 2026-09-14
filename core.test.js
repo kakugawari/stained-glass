@@ -879,6 +879,31 @@ test('色は20系統、それぞれ4つの濃淡を持つ', () => {
   }
 });
 
+/* ---------- 言葉づかい ---------- */
+
+test('窓と枠には、和名(銘)と欧文の両方がある', () => {
+  /* 決めごと: 読んで決める言葉は日本語、銘として眺める言葉は欧文。
+     銘は「漢字の和名 + 小さな欧文」の二枚組で出す */
+  const kana = /^[ぁ-んァ-ヶ一-龠々ー]+$/;
+  const latin = /^[A-Za-z ]+$/;
+  for (const f of [...C.WINDOW_SHAPES, ...C.HANDMADE]) {
+    assert.ok(f.jp && kana.test(f.jp), `${f.name}: 和名が無いか、日本語でない (${f.jp})`);
+    assert.ok(latin.test(f.name), `${f.jp}: 欧文の銘が欧文でない (${f.name})`);
+  }
+  const jps = [...C.WINDOW_SHAPES, ...C.HANDMADE].map(f => f.jp);
+  assert.strictEqual(new Set(jps).size, jps.length, '和名が重複している');
+});
+
+test('硝子と木枠の名は、すべて日本語', () => {
+  const kana = /^[ぁ-んァ-ヶ一-龠々ー]+$/;
+  for (const f of C.COLOR_FAMILIES) {
+    assert.ok(kana.test(f.name), `硝子の名が日本語でない: ${f.name}`);
+  }
+  for (const f of C.FRAMES) {
+    assert.ok(kana.test(f.name), `木枠の名が日本語でない: ${f.name}`);
+  }
+});
+
 /* ---------- 硝子棚 ---------- */
 
 test('最初から持っている色は、今までと同じ10系統', () => {

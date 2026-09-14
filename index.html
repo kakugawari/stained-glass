@@ -184,14 +184,27 @@
   #to-title:active { color: rgba(var(--accent),1); }
 
   /* ===== 枠の名前(上にふわっと出る) ===== */
+  /* 窓の銘。大正の商標ラベルと同じ組み方 ——
+     漢字の銘を大きく、その下に字間をあけた小さな欧文を添える */
   #frame-name {
-    position: fixed; top: 14px; left: 50%;
+    position: fixed; top: 10px; left: 50%;
     transform: translateX(-50%);
+    text-align: center; line-height: 1.2;
     color: rgba(var(--ink),0.88);
-    font-size: 13px; letter-spacing: 0.3em;
     pointer-events: none;
     opacity: 0;
     transition: opacity 0.8s ease;
+  }
+  #frame-name .jp {
+    display: block;
+    font-size: 14px; letter-spacing: 0.34em;
+    text-indent: 0.34em;           /* 字間のぶん、右に寄って見えるのを戻す */
+  }
+  #frame-name .en {
+    display: block; margin-top: 3px;
+    font-size: 8.5px; letter-spacing: 0.42em;
+    text-indent: 0.42em;
+    color: rgba(var(--ink-soft),0.62);
   }
   #frame-name.show { opacity: 1; }
 
@@ -312,7 +325,7 @@
 <body>
 
 <canvas id="cv"></canvas>
-<div id="frame-name"></div>
+<div id="frame-name"><span class="jp"></span><span class="en"></span></div>
 <div id="unlock"></div>
 
 <div id="shelf" hidden>
@@ -343,19 +356,19 @@
       <span class="name">つづきから</span><span class="note" id="resume-note"></span>
     </button>
     <button class="start-btn" data-diff="veasy">
-      <span class="name">very easy</span><span class="note">10枚 ・ ひと息に</span>
+      <span class="name">ひと息</span><span class="note">10枚</span>
     </button>
     <button class="start-btn" data-diff="easy">
-      <span class="name">easy</span><span class="note">20枚</span>
+      <span class="name">ゆるり</span><span class="note">20枚</span>
     </button>
     <button class="start-btn" data-diff="normal">
-      <span class="name">normal</span><span class="note">40枚</span>
+      <span class="name">ほどよく</span><span class="note">40枚</span>
     </button>
     <button class="start-btn" data-diff="hard">
-      <span class="name">hard</span><span class="note">80枚</span>
+      <span class="name">じっくり</span><span class="note">80枚</span>
     </button>
     <button class="start-btn" data-diff="vhard">
-      <span class="name">very hard</span><span class="note">140枚 ・ じっくり</span>
+      <span class="name">とことん</span><span class="note">140枚</span>
     </button>
   </div>
 </div>
@@ -525,7 +538,7 @@ let panelRatio = 0.62;                /* 現在の外形の幅/高さ */
 
 /* 窓のまわりに空けておく場所。難易度はタイトル画面で選ぶので、
    遊ぶ画面に残るのは枠の名前(上)と色の帯(下)だけ */
-const TITLE_SPACE = 30;   /* 枠の名前のぶん */
+const TITLE_SPACE = 44;   /* 枠の名前のぶん */
 const EDGE = 4;           /* 画面のふちの余白 */
 
 /* 操作帯の大きさ。タイトル画面では隠れていて測れないが、隠れているあいだも
@@ -670,11 +683,14 @@ function refreshHosts() {
 }
 
 const frameNameEl = document.getElementById("frame-name");
+const frameNameJpEl = frameNameEl.querySelector(".jp");
+const frameNameEnEl = frameNameEl.querySelector(".en");
 const remainEl = document.getElementById("remain");
 let nameTimer = null;
 
-function showFrameName(name) {
-  frameNameEl.textContent = "─ " + name + " ─";
+function showFrameName(jp, en) {
+  frameNameJpEl.textContent = "─ " + jp + " ─";
+  frameNameEnEl.textContent = en.toUpperCase();
   frameNameEl.classList.add("show");
   clearTimeout(nameTimer);
   nameTimer = setTimeout(() => frameNameEl.classList.remove("show"), 2400);
@@ -685,7 +701,7 @@ function updateRemain() {
   if (n === 0) {
     remainEl.classList.add("hidden");
   } else {
-    remainEl.textContent = n + " left";
+    remainEl.textContent = "のこり " + n + " 枚";
     remainEl.classList.remove("hidden");
   }
 }
@@ -703,7 +719,7 @@ function drawOneWindow(diffKey) {
     layoutPanel();
     return { cells: hm.build(DIFF_TARGET[diffKey]),   /* 難易度に合わせた細かさで */
              ratio: 0.62, poly: UNIT_RECT, panelW: PW, panelH: PH,
-             shape: null, handmade: hm.name, name: hm.name };
+             shape: null, handmade: hm.name, name: hm.jp, en: hm.name };
   }
   /* ランダム枠:外形を抽選し、縁取りの帯をめぐらせて、内側を割る */
   const shape = WINDOW_SHAPES[(Math.random() * WINDOW_SHAPES.length) | 0];
@@ -724,7 +740,7 @@ function drawOneWindow(diffKey) {
       curveBow: style.bow,
     }),
     ratio: shape.ratio, poly: shapePoly, panelW: PW, panelH: PH,
-    shape: shape.key, handmade: null, name: shape.name,
+    shape: shape.key, handmade: null, name: shape.jp, en: shape.name,
   };
 }
 
@@ -743,7 +759,7 @@ function newWindow(diffKey) {
   cells = made.cells;
   curShape = made.shape;
   curHandmade = made.handmade;
-  showFrameName(made.name);
+  showFrameName(made.name, made.en);
 
   fills = new Array(cells.length).fill(null);
   refreshHosts();
@@ -865,7 +881,7 @@ function showTitle() {
   const left = fills.filter((f, i) => f === null && hosts[i] === i).length;
   const canResume = cells.length > 0 && !completed && fills.some(f => f !== null);
   resumeEl.hidden = !canResume;
-  if (canResume) resumeNoteEl.textContent = `のこり ${left}`;
+  if (canResume) resumeNoteEl.textContent = `のこり ${left} 枚`;
   startEl.hidden = false;
   startEl.classList.remove("fading");
   barEl2.hidden = true;

@@ -200,7 +200,7 @@ async function run() {
 
     // 画面の「n left」と中身が合っているか
     const shownRemain = (await phone.textContent('#remain')).trim();
-    ok(shownRemain === `${after.remain} left`,
+    ok(shownRemain === `のこり ${after.remain} 枚`,
       `のこり枚数の表示と中身が合う (画面「${shownRemain}」/ 中身 ${after.remain})`);
 
     // 押した場所が、狙ったセルに入っているか(座標のずれよけ)
@@ -326,6 +326,75 @@ async function run() {
     });
     ok(flick.sweeping, '窓の外から速くはらうと、光の帯が走る');
     ok(flick.added === 0, 'そのはらいでは硝子が 1 枚も嵌まらない');
+
+    // ------------------------------------------------ 言葉づかい
+    section('言葉づかい');
+    // 難易度は「読んで決める言葉」。日本語で出ているか
+    const menu = await phone.evaluate(() => {
+      window.__app.showTitle();
+      return [...document.querySelectorAll('.start-btn[data-diff]')].map((el) => ({
+        key: el.dataset.diff,
+        name: el.querySelector('.name').textContent.trim(),
+        note: el.querySelector('.note').textContent.trim(),
+      }));
+    });
+    const kana = /^[ぁ-んァ-ヶ一-龠々ー]+$/;
+    ok(menu.every((m) => kana.test(m.name)),
+      `難易度は日本語で出る (${menu.map((m) => m.name).join(' / ')})`);
+    ok(menu.every((m) => /^\d+枚$/.test(m.note)),
+      `枚数も日本語の数え方 (${menu.map((m) => m.note).join(' / ')})`);
+
+    // 窓の銘は「漢字の和名 + 小さな欧文」の二枚組
+    await start(phone, 'normal');
+    const plate = await phone.evaluate(() => {
+      const el = document.getElementById('frame-name');
+      const jp = el.querySelector('.jp'), en = el.querySelector('.en');
+      const sJp = getComputedStyle(jp), sEn = getComputedStyle(en);
+      return { jp: jp.textContent.trim(), en: en.textContent.trim(),
+               jpSize: parseFloat(sJp.fontSize), enSize: parseFloat(sEn.fontSize),
+               shown: el.classList.contains('show') };
+    });
+    ok(plate.shown && kana.test(plate.jp.replace(/[─\s]/g, '')),
+      `窓の銘が和名で出る (${plate.jp})`);
+    ok(/^[A-Z ]+$/.test(plate.en) && plate.enSize < plate.jpSize,
+      `欧文は添え名として小さく出る (${plate.en} / ${plate.enSize}px < ${plate.jpSize}px)`);
+
+    // 二段にしたぶん、銘が窓にかぶっていないか
+    const clear = await phone.evaluate(() => {
+      const r = document.getElementById('frame-name').getBoundingClientRect();
+      const p = window.__app.state().panel;
+      return { bottom: Math.round(r.bottom), top: Math.round(p.y) };
+    });
+    ok(clear.bottom <= clear.top,
+      `銘が窓にかぶらない (銘の下端 ${clear.bottom}px / 窓の上端 ${clear.top}px)`);
+
+    // のこり枚数も日本語
+    await phone.evaluate(() => {
+      const c = window.__app.cellCenter(0); window.__app.tapCell(c.x, c.y);
+    });
+    await phone.waitForTimeout(80);
+    const remainText = (await phone.textContent('#remain')).trim();
+    ok(/^のこり \d+ 枚$/.test(remainText), `のこり枚数も日本語 (${remainText})`);
+
+    // 画面に出ている言葉に、英語の取り残しが無いか
+    const strays = await phone.evaluate(() => {
+      const out = [];
+      const walk = (n) => {
+        if (n.nodeType === 3) {
+          const t = n.textContent.trim();
+          /* 銘の欧文だけは、添え名として出てよい */
+          if (t && /[A-Za-z]/.test(t) && !n.parentElement.closest('#frame-name .en')) out.push(t);
+          return;
+        }
+        if (n.nodeType !== 1 || n.hidden) return;
+        if (getComputedStyle(n).display === 'none') return;
+        for (const c of n.childNodes) walk(c);
+      };
+      walk(document.body);
+      return out;
+    });
+    ok(strays.length === 0,
+      `遊ぶ画面に英語の取り残しが無い${strays.length ? ' — ' + strays.join(' / ') : ''}`);
 
     // ------------------------------------------------ 色を選ぶ帯
     section('色を選ぶ帯');
