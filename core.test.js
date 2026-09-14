@@ -764,11 +764,15 @@ test('手作り枠は、目標の枚数に合わせて細かさが変わる', ()
 test('敷き詰めの文様は、隙間なく噛み合い、どのセルも押せる', () => {
   /* 麻の葉・亀甲は「分割」ではなく「敷き詰め」。同じ形が繰り返し噛み合う。
      格子を窓の幅・高さで割り切っているので、縁に欠けらが残らない */
-  for (const name of ['Hemp Leaf', 'Tortoiseshell']) {
+  for (const name of ['Hemp Leaf', 'Tortoiseshell', 'Basket Weave',
+                      'Linked Octagons', 'Rising Steam']) {
     const frame = C.HANDMADE.find(f => f.name === name);
     assert.ok(frame, `${name} が無い`);
+    /* 敷き詰めは押せる細かさが飛び飛びなので、全部の段には出ない。
+       籠目はいちばん狭くて normal と hard の2段だけ。
+       段ごとの品ぞろえは「どの段にも、実在の文様が二つ以上出る」で見る */
     const at = DIFFS.filter(d => C.HANDMADE_BY_DIFF[d].includes(name));
-    assert.ok(at.length >= 3, `${frame.jp}: 出せる段が ${at.length} しかない`);
+    assert.ok(at.length >= 2, `${frame.jp}: 出せる段が ${at.length} しかない`);
     for (const diff of at) {
       const cells = frame.build(C.DIFF_TARGET[diff]);
       assert.ok(Math.abs(sumArea(cells) - 1) < 1e-9,
@@ -790,11 +794,13 @@ test('敷き詰めの文様は、隙間なく噛み合い、どのセルも押�
   }
 });
 
-test('麻の葉と亀甲を合わせると、どの段にも実在の文様が出る', () => {
+test('どの段にも、実在の文様が二つ以上出る', () => {
+  const woven = ['Hemp Leaf', 'Tortoiseshell', 'Basket Weave',
+                 'Linked Octagons', 'Rising Steam'];
   for (const diff of DIFFS) {
-    const pool = C.HANDMADE_BY_DIFF[diff];
-    assert.ok(pool.includes('Hemp Leaf') || pool.includes('Tortoiseshell'),
-      `${diff}: 敷き詰めの文様がひとつも出ない`);
+    const pool = C.HANDMADE_BY_DIFF[diff].filter(n => woven.includes(n));
+    assert.ok(pool.length >= 2,
+      `${diff}: 敷き詰めの文様が ${pool.length} つしか出ない`);
   }
 });
 

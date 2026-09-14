@@ -583,6 +583,102 @@
         }, allTappable);
       } },
 
+    /* 籠目。竹籠の編み目。正三角格子の「辺の中点」をつなぐと、
+       六角と三角が織り合う形になる */
+    { name: "Basket Weave", jp: "籠目", build(target) {
+        return closestTo(target, 2, 6, (cols) => {
+          const W = 1 / cols;
+          const rows = Math.max(1, Math.round(2 / (W * Math.sqrt(3) * PANEL_R)));
+          const H = 1 / rows;
+          const cells = [];
+          const mid = (a, b) => [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+          for (let r = -1; r <= rows; r++) {
+            const y0 = r * H, y1 = (r + 1) * H, off = (r % 2) * (W / 2);
+            for (let k = -2; k <= cols + 1; k++) {
+              const x = k * W + off;
+              /* 上向き△と下向き▽、それぞれの中点三角 */
+              for (const t of [[[x, y1], [x + W, y1], [x + W / 2, y0]],
+                               [[x + W / 2, y0], [x + W * 1.5, y0], [x + W, y1]]]) {
+                const c = clipToUnit([mid(t[0], t[1]), mid(t[1], t[2]), mid(t[2], t[0])]);
+                if (c) cells.push(c);
+              }
+              /* 格子の頂点まわりの六角(その頂点から出る6辺の中点) */
+              const V = [x, y1];
+              const hex = [[x + W, y1], [x + W / 2, y0], [x - W / 2, y0],
+                           [x - W, y1], [x - W / 2, y1 + H], [x + W / 2, y1 + H]]
+                .map((q) => mid(V, q));
+              const c = clipToUnit(hex);
+              if (c) cells.push(c);
+            }
+          }
+          return cells;
+        }, allTappable);
+      } },
+
+    /* 八角つなぎ。八角形のあいだに小さな菱。大正の洋館の欄間によくある形。
+       窓のふちでは角を落とさず、ぴたりと付ける (落とすと縁に隙間が出る) */
+    { name: "Linked Octagons", jp: "八角つなぎ", build(target) {
+        return closestTo(target, 2, 7, (cols) => {
+          const W = 1 / cols;
+          const rows = Math.max(1, Math.round(cols / PANEL_R));   /* 画面の上で正方形に */
+          const H = 1 / rows;
+          const ax = W * 0.25, ay = H * 0.25;
+          const cells = [];
+          for (let r = 0; r < rows; r++) {
+            for (let k = 0; k < cols; k++) {
+              const x = k * W, y = r * H;
+              const L = k > 0, Rt = k < cols - 1, T = r > 0, B = r < rows - 1;
+              const poly = [];
+              poly.push(T && L ? [x + ax, y] : [x, y]);
+              poly.push(T && Rt ? [x + W - ax, y] : [x + W, y]);
+              if (T && Rt) poly.push([x + W, y + ay]);
+              poly.push(B && Rt ? [x + W, y + H - ay] : [x + W, y + H]);
+              if (B && Rt) poly.push([x + W - ax, y + H]);
+              poly.push(B && L ? [x + ax, y + H] : [x, y + H]);
+              if (B && L) poly.push([x, y + H - ay]);
+              if (T && L) poly.push([x, y + ay]);
+              const c = clipToUnit(cleanPoly(poly));
+              if (c) cells.push(c);
+              /* 四隅が出会う所の菱形 */
+              if (Rt && B) {
+                const d = clipToUnit([[x + W - ax, y + H], [x + W, y + H - ay],
+                                      [x + W + ax, y + H], [x + W, y + H + ay]]);
+                if (d) cells.push(d);
+              }
+            }
+          }
+          return cells;
+        }, allTappable);
+      } },
+
+    /* 立涌。湯気の立ちのぼる形。ふくらんだ縦の帯を並べる。
+       いちばん外の2本はまっすぐ (うねらせると窓からはみ出して隙間が出る) */
+    { name: "Rising Steam", jp: "立涌", build(target) {
+        return closestTo(target, 2, 7, (bands) => {
+          const rows = Math.max(2, Math.round(bands / PANEL_R * 0.8));
+          const SEG = 14;                       /* 曲線を折れ線で近づける刻み */
+          const bulge = 0.38 / bands;
+          const edge = (i, v) => (i === 0 || i === bands)
+            ? i / bands
+            : i / bands + Math.sin(v * Math.PI * rows) * bulge;
+          const cells = [];
+          for (let b = 0; b < bands; b++) {
+            for (let r = 0; r < rows; r++) {
+              const v0 = r / rows, v1 = (r + 1) / rows;
+              const left = [], right = [];
+              for (let t = 0; t <= SEG; t++) {
+                const v = v0 + (v1 - v0) * t / SEG;
+                left.push([edge(b, v), v]);
+                right.push([edge(b + 1, v), v]);
+              }
+              const c = clipToUnit([...left, ...right.reverse()]);
+              if (c) cells.push(c);
+            }
+          }
+          return cells;
+        }, allTappable);
+      } },
+
     { name: "Checker", jp: "市松", build(target) {
         return closestTo(target, 1, 22, (n) => gridCells(colsFor(n), n));
       } },
@@ -878,15 +974,19 @@
   }
 
   const HANDMADE_BY_DIFF = {
-    veasy:  ["Tortoiseshell", "Checker", "Grand Diamond", "Three Diamonds", "Sunburst",
+    veasy:  ["Tortoiseshell", "Linked Octagons", "Rising Steam",
+             "Checker", "Grand Diamond", "Three Diamonds", "Sunburst",
              "Brickwork", "Diamond Lattice", "Chevron"],
-    easy:   ["Tortoiseshell", "Checker", "Grand Diamond", "Three Diamonds", "Columns",
+    easy:   ["Tortoiseshell", "Linked Octagons", "Rising Steam",
+             "Checker", "Grand Diamond", "Three Diamonds", "Columns",
              "Brickwork", "Door Panel", "Diamond Lattice", "Wheel Window", "Chevron"],
-    normal: ["Hemp Leaf", "Tortoiseshell", "Checker", "Grand Diamond", "Three Diamonds",
-             "Columns", "Brickwork", "Door Panel", "Diamond Lattice", "Wheel Window",
-             "Chevron"],
-    hard:   ["Hemp Leaf", "Checker", "Columns", "Brickwork", "Diamond Lattice", "Chevron"],
-    vhard:  ["Hemp Leaf", "Checker", "Columns", "Diamond Lattice", "Chevron"],
+    normal: ["Hemp Leaf", "Tortoiseshell", "Basket Weave", "Linked Octagons", "Rising Steam",
+             "Checker", "Grand Diamond", "Three Diamonds", "Columns", "Brickwork",
+             "Door Panel", "Diamond Lattice", "Wheel Window", "Chevron"],
+    hard:   ["Hemp Leaf", "Basket Weave", "Linked Octagons", "Rising Steam",
+             "Checker", "Columns", "Brickwork", "Diamond Lattice", "Chevron"],
+    vhard:  ["Hemp Leaf", "Linked Octagons",
+             "Checker", "Columns", "Diamond Lattice", "Chevron"],
   };
 
   /* ============================================================
