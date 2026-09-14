@@ -864,8 +864,8 @@ test('埋まっていないのに「完成」と書かれていたら、信じ�
 
 /* ---------- 色 ---------- */
 
-test('色は10系統、それぞれ4つの濃淡を持つ', () => {
-  assert.strictEqual(C.COLOR_FAMILIES.length, 10);
+test('色は20系統、それぞれ4つの濃淡を持つ', () => {
+  assert.strictEqual(C.COLOR_FAMILIES.length, 20);
   const names = new Set();
   for (const fam of C.COLOR_FAMILIES) {
     assert.ok(fam.name, '名前のない色');
@@ -875,5 +875,67 @@ test('色は10系統、それぞれ4つの濃淡を持つ', () => {
     for (const s of fam.shades) {
       assert.match(s, /^#[0-9a-f]{6}$/, `${fam.name}: 色の書き方が違う (${s})`);
     }
+    assert.ok(Number.isInteger(fam.at) && fam.at >= 0, `${fam.name}: 仕入れる窓数が変`);
+  }
+});
+
+/* ---------- 硝子棚 ---------- */
+
+test('最初から持っている色は、今までと同じ10系統', () => {
+  const open = C.unlockedColors(0);
+  assert.strictEqual(open.length, 10, '最初に持っている色が10系統でない');
+  assert.deepStrictEqual(open.map(f => f.name),
+    ['紅', '橙', '金', '若草', '翠', '浅葱', '瑠璃', '菫', '桃', '乳白'],
+    '前からあった色が減っている(持っていた物は取り上げない)');
+  assert.strictEqual(C.unlockedFrames(0).length, 1, '最初の木枠は1種');
+});
+
+test('棚は増えるだけで、減らない', () => {
+  let prevC = 0, prevF = 0;
+  for (let n = 0; n <= 40; n++) {
+    const c = C.unlockedColors(n).length, f = C.unlockedFrames(n).length;
+    assert.ok(c >= prevC, `${n}窓で色が減った (${prevC} → ${c})`);
+    assert.ok(f >= prevF, `${n}窓で木枠が減った (${prevF} → ${f})`);
+    prevC = c; prevF = f;
+  }
+  assert.strictEqual(prevC, C.COLOR_FAMILIES.length, '40窓で色がそろわない');
+  assert.strictEqual(prevF, C.FRAMES.length, '40窓で木枠がそろわない');
+});
+
+test('つぎに増える物は、いちばん近い一つ', () => {
+  assert.strictEqual(C.nextUnlock(0).name, '臙脂');
+  assert.strictEqual(C.nextUnlock(0).left, 1);
+  const all = [...C.COLOR_FAMILIES, ...C.FRAMES].map(f => f.at).filter(n => n > 0);
+  const last = Math.max(...all);
+  assert.strictEqual(C.nextUnlock(last), null, 'そろっても「つぎ」が出る');
+  /* どこで見ても、つぎの物は必ず未来にある */
+  for (let n = 0; n < last; n++) {
+    const u = C.nextUnlock(n);
+    assert.ok(u && u.at > n && u.left === u.at - n, `${n}窓での「つぎ」がおかしい`);
+  }
+});
+
+test('増えた物の知らせは、その回に増えた分だけ', () => {
+  assert.deepStrictEqual(C.newlyUnlocked(0, 1).map(g => g.name), ['臙脂']);
+  assert.deepStrictEqual(C.newlyUnlocked(1, 1), [], '増えていないのに知らせる');
+  /* 1窓ずつ数えた合計が、まとめて数えた物と同じ */
+  const one = [];
+  for (let n = 0; n < 40; n++) one.push(...C.newlyUnlocked(n, n + 1).map(g => g.name));
+  const all = C.newlyUnlocked(0, 40).map(g => g.name);
+  assert.deepStrictEqual([...one].sort(), [...all].sort(), '取りこぼしか、二重に知らせている');
+  assert.strictEqual(all.length,
+    C.COLOR_FAMILIES.length - 10 + C.FRAMES.length - 1, '増える物の数が合わない');
+});
+
+test('木枠はどれも、3段の木目と縁の色を持つ', () => {
+  const keys = new Set();
+  for (const f of C.FRAMES) {
+    assert.ok(f.key && !keys.has(f.key), `木枠の key が重複: ${f.key}`);
+    keys.add(f.key);
+    assert.ok(f.name, '名前のない木枠');
+    assert.strictEqual(f.wood.length, 3, `${f.name}: 木目が3段でない`);
+    for (const c of f.wood) assert.match(c, /^#[0-9a-f]{6}$/, `${f.name}: 色の書き方が違う`);
+    assert.match(f.edge, /^rgba\(/, `${f.name}: 縁の色が rgba でない`);
+    assert.ok(Number.isInteger(f.at) && f.at >= 0, `${f.name}: 仕入れる窓数が変`);
   }
 });

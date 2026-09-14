@@ -21,18 +21,81 @@
   /* ============================================================
      色:宝石の10系統
      ============================================================ */
+  /* 硝子の色。`at` は、仕入れられるようになるまでに仕上げる窓の数。
+     0 は最初から棚にある (今までの10色。持っていた物は取り上げない)。
+     名は大正の頃の色名から採る */
   const COLOR_FAMILIES = [
-    { name: "紅",   shades: ["#c1123a", "#e33d5a", "#8f0f2e", "#ff6b7a"] },
-    { name: "橙",   shades: ["#e06520", "#ff8a3d", "#b54a12", "#ffa763"] },
-    { name: "金",   shades: ["#e6a417", "#ffc94d", "#b47a0c", "#ffe08a"] },
-    { name: "若草", shades: ["#7ab648", "#9ed46a", "#5a8f2e", "#c0e896"] },
-    { name: "翠",   shades: ["#0f9d58", "#28c76f", "#0a6e3d", "#66e0a3"] },
-    { name: "浅葱", shades: ["#158fa8", "#3ab8cf", "#0d6a80", "#7dd8e8"] },
-    { name: "瑠璃", shades: ["#1440c8", "#2a6cf0", "#0d2a8f", "#5aa0ff"] },
-    { name: "菫",   shades: ["#6a3fb5", "#8f63d6", "#4a2585", "#b394e8"] },
-    { name: "桃",   shades: ["#d4548a", "#ee7fae", "#a83866", "#ffa8cc"] },
-    { name: "乳白", shades: ["#cfd9e8", "#e8eef5", "#b8c6d8", "#dfe4ec"] },
+    { name: "紅",   at: 0,  shades: ["#c1123a", "#e33d5a", "#8f0f2e", "#ff6b7a"] },
+    { name: "橙",   at: 0,  shades: ["#e06520", "#ff8a3d", "#b54a12", "#ffa763"] },
+    { name: "金",   at: 0,  shades: ["#e6a417", "#ffc94d", "#b47a0c", "#ffe08a"] },
+    { name: "若草", at: 0,  shades: ["#7ab648", "#9ed46a", "#5a8f2e", "#c0e896"] },
+    { name: "翠",   at: 0,  shades: ["#0f9d58", "#28c76f", "#0a6e3d", "#66e0a3"] },
+    { name: "浅葱", at: 0,  shades: ["#158fa8", "#3ab8cf", "#0d6a80", "#7dd8e8"] },
+    { name: "瑠璃", at: 0,  shades: ["#1440c8", "#2a6cf0", "#0d2a8f", "#5aa0ff"] },
+    { name: "菫",   at: 0,  shades: ["#6a3fb5", "#8f63d6", "#4a2585", "#b394e8"] },
+    { name: "桃",   at: 0,  shades: ["#d4548a", "#ee7fae", "#a83866", "#ffa8cc"] },
+    { name: "乳白", at: 0,  shades: ["#cfd9e8", "#e8eef5", "#b8c6d8", "#dfe4ec"] },
+    { name: "臙脂", at: 1,  shades: ["#9e1b3c", "#c23a5c", "#6e0f28", "#d97089"] },
+    { name: "琥珀", at: 2,  shades: ["#c87a1e", "#e89c3c", "#93540f", "#f0bb72"] },
+    { name: "黄檗", at: 4,  shades: ["#c9b93a", "#e0d165", "#9b8c20", "#eee79a"] },
+    { name: "常磐", at: 6,  shades: ["#0b6b4f", "#148a68", "#064a36", "#4fb695"] },
+    { name: "群青", at: 9,  shades: ["#2b3f9e", "#4759c4", "#1a2a72", "#7b8ade"] },
+    { name: "藤",   at: 12, shades: ["#8484cc", "#a3a3e0", "#62629f", "#c4c4ec"] },
+    { name: "鶯",   at: 16, shades: ["#6e6b3a", "#8f8b52", "#4d4b24", "#b0ac7a"] },
+    { name: "鉄紺", at: 20, shades: ["#1f3055", "#324a78", "#101d36", "#5a6ea0"] },
+    { name: "葡萄", at: 26, shades: ["#6b2545", "#8f3a62", "#4a152e", "#ab6088"] },
+    { name: "煤竹", at: 32, shades: ["#6b4a35", "#8a6449", "#4a3122", "#a98a70"] },
   ];
+
+  /* ============================================================
+     木枠の塗り
+     ------------------------------------------------------------
+     窓を仕上げるほど、選べる塗りが増える。色は canvas へそのまま渡す
+     (壁の明暗にかかわらず、木枠は木枠の色でよい)。
+     `edge` は木枠のまわりに落とす影、`inner` は内側の細い縁。
+     ============================================================ */
+  const FRAMES = [
+    { key: "kokutan", name: "黒檀", at: 0,
+      wood: ["#46545a", "#36434a", "#2a353b"], edge: "rgba(20,26,30,0.30)" },
+    { key: "koshoku", name: "古色", at: 3,
+      wood: ["#6a5a3e", "#51452f", "#3a3122"], edge: "rgba(40,32,20,0.30)" },
+    { key: "shunuri", name: "朱塗", at: 8,
+      wood: ["#8c3222", "#6e2418", "#4e1710"], edge: "rgba(60,18,12,0.32)" },
+    { key: "shiraki", name: "白木", at: 14,
+      wood: ["#c3ae8c", "#a8906c", "#8a7450"], edge: "rgba(90,74,52,0.26)" },
+    { key: "seidou",  name: "青銅", at: 22,
+      wood: ["#3f6b63", "#2e534d", "#1f3b36"], edge: "rgba(16,40,36,0.30)" },
+  ];
+
+  /* ============================================================
+     硝子棚 — 仕上げた窓の数で、持ち物が増えていく
+     ------------------------------------------------------------
+     「増える」だけ。減らさない。数え方は「窓を1つ埋めきったら1」。
+     難易度では重みを付けない (easy を数でこなすのも、very hard を
+     じっくりやるのも、どちらもその人の遊び方)。
+     ============================================================ */
+  const unlockedColors = (cleared) => COLOR_FAMILIES.filter(f => f.at <= cleared);
+  const unlockedFrames = (cleared) => FRAMES.filter(f => f.at <= cleared);
+
+  /** つぎに増える物。全部そろっていれば null */
+  function nextUnlock(cleared) {
+    let best = null;
+    for (const f of COLOR_FAMILIES) {
+      if (f.at > cleared && (!best || f.at < best.at)) best = { kind: "color", name: f.name, at: f.at };
+    }
+    for (const f of FRAMES) {
+      if (f.at > cleared && (!best || f.at < best.at)) best = { kind: "frame", name: f.name, at: f.at };
+    }
+    return best && { ...best, left: best.at - cleared };
+  }
+
+  /** cleared が before → after に増えた時、新しく増えた物 */
+  function newlyUnlocked(before, after) {
+    const got = [];
+    for (const f of COLOR_FAMILIES) if (f.at > before && f.at <= after) got.push({ kind: "color", name: f.name });
+    for (const f of FRAMES) if (f.at > before && f.at <= after) got.push({ kind: "frame", name: f.name });
+    return got;
+  }
 
   /* ============================================================
      幾何ユーティリティ
@@ -1305,6 +1368,7 @@
 
   return {
     COLOR_FAMILIES, relLuminance,
+    FRAMES, unlockedColors, unlockedFrames, nextUnlock, newlyUnlocked,
     rectCell, diamondSplit, gridCells, polyArea, clipConvex, clipToUnit, UNIT_RECT, pointInPoly, insidePoint, cleanPoly,
     WINDOW_SHAPES, HANDMADE, HANDMADE_BY_DIFF, fitsDifficulty, fitSlack, FIT_PANEL,
     DIFF_TARGET, DIFF_MIN_PX, DIFF_ORDER, randomFrame,
