@@ -58,7 +58,7 @@ function sameCells(a, b, eps = 1e-6) {
   return true;
 }
 
-const DIFFS = ['easy', 'normal', 'hard', 'vhard'];
+const DIFFS = C.DIFF_ORDER;   /* 段を足したらテストも一緒に増える */
 /* スマホの細い画面・大きめの画面・その中間 */
 const PANELS = [[220, 355], [300, 484], [500, 806]];
 
@@ -190,8 +190,95 @@ test('難易度が上がるほど枚数が増える(目標のまわりに収ま�
     assert.ok(hi <= target * 1.3 + 6,
       `${diff}: ${hi} 枚まで増える (目標 ${target} に対して多すぎる)`);
   }
-  assert.ok(avg.easy < avg.normal && avg.normal < avg.hard && avg.hard < avg.vhard,
+  assert.ok(avg.veasy < avg.easy && avg.easy < avg.normal &&
+            avg.normal < avg.hard && avg.hard < avg.vhard,
     `枚数が難易度順に増えていない: ${JSON.stringify(avg)}`);
+});
+
+test('段の間隔がそろっている(どこかだけが崖にならない)', () => {
+  const t = C.DIFF_ORDER.map(k => C.DIFF_TARGET[k]);
+  const steps = [];
+  for (let i = 1; i < t.length; i++) steps.push(t[i] / t[i - 1]);
+  for (const r of steps) {
+    assert.ok(r > 1, `段が増えていない: ${steps.join(' / ')}`);
+  }
+  /* いちばん広い段が、いちばん狭い段の 1.5 倍を超えない。
+     10→40 の4倍 と 80→140 の1.75倍 が並んでいた頃に戻さないため */
+  const spread = Math.max(...steps) / Math.min(...steps);
+  assert.ok(spread <= 1.5,
+    `段の間隔がそろっていない (${steps.map(r => r.toFixed(2) + '倍').join(' / ')})`);
+});
+
+test('どの段も、押す枚数が目標の帯に収まる(帯から外れたら引き直す)', () => {
+  const shapes = C.WINDOW_SHAPES;
+  for (const diff of DIFFS) {
+    const target = C.DIFF_TARGET[diff];
+    for (let t = 0; t < 24; t++) {
+      const shape = shapes[t % shapes.length];
+      const [PW, PH] = [300, 300 / shape.ratio];
+      const made = C.buildInBand(diff, PW, PH, () => ({
+        cells: C.makeWindow({
+          diff, shapePoly: shape.poly(), symmetric: t % 2 === 0,
+          panelW: PW, panelH: PH, border: true, curve: true,
+          curveChance: 0.5, curveBow: 0.11,
+        }),
+        panelW: PW, panelH: PH,
+      }));
+      const taps = C.tappableCount(made.cells, PW, PH);
+      assert.ok(C.inTargetBand(taps, diff),
+        `${diff}/${shape.name}: ${taps} 枚 (目標 ${target} ± ${C.fitSlack(target).toFixed(1)})`);
+    }
+  }
+});
+
+test('許容幅はどの段も同じ割合(枚数の少ない段だけ広くしない)', () => {
+  for (const k of DIFFS) {
+    const t = C.DIFF_TARGET[k];
+    assert.ok(C.fitSlack(t) / t <= 0.351,
+      `${k}: 目標 ${t} に対して許容 ±${C.fitSlack(t)} (${(C.fitSlack(t) / t * 100).toFixed(0)}%)`);
+  }
+});
+
+test('押せるセルは、狙った一点を1px ずらしても同じセルに入る', () => {
+  /* 三日月のようなセルは外枠が大きくても どこも細い。中の一点がふちすれすれだと、
+     そこを狙って押しても隣のセルに入ってしまう(丸め誤差1px で逃げる) */
+  const shapes = C.WINDOW_SHAPES;
+  let checked = 0;
+  for (const diff of DIFFS) {
+    for (let t = 0; t < 16; t++) {
+      const shape = shapes[t % shapes.length];
+      const PW = 300, PH = 300 / shape.ratio;
+      const cells = C.makeWindow({
+        diff, shapePoly: shape.poly(), symmetric: t % 2 === 0,
+        panelW: PW, panelH: PH, border: true, curve: true,
+        curveChance: 0.5, curveBow: 0.11,
+      });
+      const host = C.attachSlivers(cells, PW, PH);
+      for (let i = 0; i < cells.length; i++) {
+        if (host[i] !== i) continue;
+        const [u, v] = C.insidePoint(cells[i]);
+        assert.ok(C.pointInPoly(u, v, cells[i]),
+          `${diff}/${shape.name}: 中の一点が外に出た`);
+        /* 上下左右に 1px ずらしても、まだそのセルの中 */
+        for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+          assert.ok(C.pointInPoly(u + dx / PW, v + dy / PH, cells[i]),
+            `${diff}/${shape.name}: 中の一点がふちから 1px 以内`);
+        }
+        checked++;
+      }
+    }
+  }
+  assert.ok(checked > 2000, `確かめた枚数が少なすぎる (${checked})`);
+});
+
+test('押す枚数は、預けたかけらを数えない', () => {
+  /* 右下に、指では押せない細片をわざと作る */
+  const cells = [
+    C.rectCell(0, 0, 1, 0.5), C.rectCell(0, 0.5, 1, 0.98),
+    C.rectCell(0, 0.98, 1, 1),                        /* 高さ 2% = 8px のかけら */
+  ];
+  assert.strictEqual(cells.length, 3);
+  assert.strictEqual(C.tappableCount(cells, 255, 411), 2);
 });
 
 test('対称モードは左右対称になる', () => {

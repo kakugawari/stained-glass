@@ -90,6 +90,18 @@
   }
   #go-resume[hidden] { display: none; }
 
+  /* 段を5つに増やしたので、背の低い画面では詰める。
+     iPhone SE (568px) で「つづきから」も出ると、そのままでは
+     いちばん下の very hard が画面の外へ出てしまう */
+  @media (max-height: 700px) {
+    #start { gap: 10px; padding: 14px 20px calc(14px + env(safe-area-inset-bottom)); }
+    #start-icon { width: min(30vw, 118px); }
+    #start-sub { font-size: 12px; letter-spacing: 0.2em; }
+    #theme-toggle { padding: 5px 12px; }
+    #start-menu { gap: 6px; }
+    .start-btn { min-height: 42px; padding: 8px 14px; font-size: 14px; }
+  }
+
   /* ===== タイトルへもどる ===== */
   #to-title {
     position: fixed; top: calc(8px + env(safe-area-inset-top)); left: 8px;
@@ -222,8 +234,11 @@
     <button class="start-btn" id="go-resume" hidden>
       <span class="name">つづきから</span><span class="note" id="resume-note"></span>
     </button>
+    <button class="start-btn" data-diff="veasy">
+      <span class="name">very easy</span><span class="note">10枚 ・ ひと息に</span>
+    </button>
     <button class="start-btn" data-diff="easy">
-      <span class="name">easy</span><span class="note">10枚 ・ ひと息に</span>
+      <span class="name">easy</span><span class="note">20枚</span>
     </button>
     <button class="start-btn" data-diff="normal">
       <span class="name">normal</span><span class="note">40枚</span>
@@ -248,10 +263,11 @@
 
 /* ============================================================
    ステンドグラス(塗り絵方式・難易度制)
-   - easy / normal / hard / very hard の4段階
+   - very easy / easy / normal / hard / very hard の5段階
+     (10 / 20 / 40 / 80 / 140枚。段の比がそろうように間隔を置いた)
    - 押すたびに窓の外形(縦長・尖塔・円蓋・四角・丸窓)が
      ランダムに選ばれ、左右対称のランダム分割で枠が生まれる
-   - easy〜hard では時々、手作りの幾何学枠10種が混ざって出る
+   - どの段でも時々、手作りの幾何学枠10種が混ざって出る
    - セルをタップすると選択中の色のガラスが嵌まり、
      全て埋まると教会の鐘が鳴って光が差し込む
    ============================================================ */
@@ -262,7 +278,7 @@
 const {
   COLOR_FAMILIES, clipConvex, UNIT_RECT, pointInPoly, insidePoint, attachSlivers,
   WINDOW_SHAPES, HANDMADE, HANDMADE_BY_DIFF, makeWindow, DIFF_TARGET, relLuminance,
-  pickCurveStyle,
+  pickCurveStyle, buildInBand,
   packWindow, unpackWindow,
 } = window.Core;
 
@@ -448,6 +464,8 @@ function pickShade() {
 let cells = [];
 let fills = [];
 let hosts = [];   /* 各セルを押して嵌める時の持ち主(細いかけらは隣に預ける) */
+let mids = [];    /* 各セルの「中の一点」。光の差し込みの中心と、押す目当て。
+                     形から探すので安くはない。セルが変わった時だけ計算して使い回す */
 
 let completed = false;
 let completeGlow = 0;
@@ -460,6 +478,7 @@ let shapePoly = WINDOW_SHAPES[0].poly.call(WINDOW_SHAPES[0]);   /* 現在の外�
    預け先を決め直し、同じ持ち主のセルは同じ硝子にそろえる。
    ※ 一度嵌めた硝子は消さない */
 function refreshHosts() {
+  mids = cells.map(insidePoint);
   hosts = attachSlivers(cells, PW, PH);
   for (let i = 0; i < cells.length; i++) {
     const h = hosts[i];
@@ -492,9 +511,9 @@ function updateRemain() {
   }
 }
 
-/* 難易度を選んで新しい窓を用意する */
-function newWindow(diffKey) {
-  curDiff = diffKey;
+/* 窓を1つ引く(まだ画面には出さない)。
+   外形で縦横比が変わるので、割る前に layoutPanel で場所を決め直す */
+function drawOneWindow(diffKey) {
   const pool = HANDMADE_BY_DIFF[diffKey];
   if (pool.length > 0 && Math.random() < 0.35) {
     /* 手作り枠(外形は縦長) */
@@ -503,19 +522,19 @@ function newWindow(diffKey) {
     panelRatio = 0.62;
     shapePoly = UNIT_RECT;
     layoutPanel();
-    cells = hm.build(DIFF_TARGET[diffKey]);   /* 難易度に合わせた細かさで */
-    curShape = null;
-    curHandmade = hm.name;
-    showFrameName(hm.name);
-  } else {
-    /* ランダム枠:外形を抽選し、縁取りの帯をめぐらせて、内側を割る */
-    const shape = WINDOW_SHAPES[(Math.random() * WINDOW_SHAPES.length) | 0];
-    panelRatio = shape.ratio;
-    shapePoly = shape.poly();
-    layoutPanel();
-    /* 窓ごとに表情を引く: 直線だけ / ほどほど / 曲線多め */
-    const style = pickCurveStyle();
-    cells = makeWindow({
+    return { cells: hm.build(DIFF_TARGET[diffKey]),   /* 難易度に合わせた細かさで */
+             ratio: 0.62, poly: UNIT_RECT, panelW: PW, panelH: PH,
+             shape: null, handmade: hm.name, name: hm.name };
+  }
+  /* ランダム枠:外形を抽選し、縁取りの帯をめぐらせて、内側を割る */
+  const shape = WINDOW_SHAPES[(Math.random() * WINDOW_SHAPES.length) | 0];
+  panelRatio = shape.ratio;
+  shapePoly = shape.poly();
+  layoutPanel();
+  /* 窓ごとに表情を引く: 直線だけ / ほどほど / 曲線多め */
+  const style = pickCurveStyle();
+  return {
+    cells: makeWindow({
       diff: diffKey,
       shapePoly,
       symmetric: Math.random() < 0.5,     /* 対称/非対称は半々 */
@@ -524,11 +543,28 @@ function newWindow(diffKey) {
       curve: style.chance > 0,            /* 手作り枠はいつもまっすぐ */
       curveChance: style.chance,
       curveBow: style.bow,
-    });
-    curShape = shape.key;
-    curHandmade = null;
-    showFrameName(shape.name);
-  }
+    }),
+    ratio: shape.ratio, poly: shapePoly, panelW: PW, panelH: PH,
+    shape: shape.key, handmade: null, name: shape.name,
+  };
+}
+
+/* 難易度を選んで新しい窓を用意する。
+   出来上がりの押す枚数が目標の帯から外れたら引き直す
+   (帯の見張りは手作り枠にしかかかっていなかったので、ここで出来上がりを見る) */
+function newWindow(diffKey) {
+  curDiff = diffKey;
+  const made = buildInBand(diffKey, PW, PH, () => drawOneWindow(diffKey));
+
+  /* 採用した窓の外形で、もう一度場所を決め直してから出す
+     (引き直しのあいだに別の縦横比になっていることがある) */
+  panelRatio = made.ratio;
+  shapePoly = made.poly;
+  layoutPanel();
+  cells = made.cells;
+  curShape = made.shape;
+  curHandmade = made.handmade;
+  showFrameName(made.name);
 
   fills = new Array(cells.length).fill(null);
   refreshHosts();
@@ -710,7 +746,7 @@ function redrawGlass() {
       glassCtx.fillStyle = fills[i];
       glassCtx.globalAlpha = theme.glassAlpha;
       glassCtx.fill();
-      const mid = insidePoint(poly);
+      const mid = mids[i] || insidePoint(poly);
       const cx = ux(mid[0]), cy = vy(mid[1]);
       const rad = Math.max(8, Math.hypot(ux(poly[0][0]) - cx, vy(poly[0][1]) - cy));
       /* 光の差し込み。暗い硝子ほど控えめにする。
@@ -1170,10 +1206,12 @@ window.__app = {
     remain: fills.filter((f, i) => f === null && hosts[i] === i).length,
     remainCells: fills.filter(f => f === null).length,
     panel: { x: PX, y: PY, w: PW, h: PH },
+    diff: curDiff, shape: curShape, handmade: curHandmade,
   }),
   /* セルの中心の画面座標(指で押す場所を測るのに使う) */
+  cellAtXY: (x, y) => cellAt(x, y),
   cellCenter: (i) => {
-    const mid = insidePoint(cells[i]);
+    const mid = mids[i] || insidePoint(cells[i]);
     return { x: ux(mid[0]), y: vy(mid[1]) };
   },
   newWindow,

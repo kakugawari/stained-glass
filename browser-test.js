@@ -118,6 +118,52 @@ async function run() {
     ok(await phone.evaluate(() => document.getElementById('bar').hidden),
       'タイトル画面では色の帯を出さない');
 
+    // 段を5つに増やしたので、小さい画面でも全部が見えて押せるか確かめる
+    const small = await browser.newContext({ ...devices['iPhone SE'] });
+    const tiny = await small.newPage();
+    tiny.on('pageerror', (e) => errors.push('小さい画面: ' + e.message));
+    await tiny.goto(URL);
+    await tiny.waitForFunction(() => window.__app);
+    const btns = await tiny.evaluate(() => {
+      const list = [...document.querySelectorAll('.start-btn[data-diff]')];
+      const vh = window.innerHeight;
+      return list.map((el) => {
+        const r = el.getBoundingClientRect();
+        return { key: el.dataset.diff, top: r.top, bottom: r.bottom, h: r.height, vh };
+      });
+    });
+    ok(btns.length === 5, `小さい画面にも段が 5 つ出る (${btns.map((b) => b.key).join(' / ')})`);
+    const hidden = btns.filter((b) => b.bottom > b.vh || b.top < 0);
+    ok(hidden.length === 0,
+      `どの段も画面に収まる (いちばん下は ${Math.round(btns[4].bottom)}px / 画面 ${btns[0].vh}px)`);
+    ok(btns.every((b) => b.h >= 40),
+      `どの段も指で押せる高さ (${Math.round(Math.min(...btns.map((b) => b.h)))}px)`);
+    ok(await tiny.evaluate(() =>
+      document.documentElement.scrollHeight - document.documentElement.clientHeight <= 1),
+      '小さい画面でもタイトルが縦にはみ出さない');
+
+    // 「つづきから」が出ると 6 個になる。いちばん下の段が画面の外へ出ないか
+    // (段を5つにした時、iPhone SE で very hard が 8px はみ出していた)
+    await tiny.evaluate(() => {
+      window.__app.enterPlay('normal');
+      window.__app.newWindow('normal');
+      const c = window.__app.cellCenter(0);
+      window.__app.tapCell(c.x, c.y);
+      window.__app.showTitle();
+    });
+    await tiny.waitForTimeout(150);
+    const withResume = await tiny.evaluate(() => {
+      const list = [...document.querySelectorAll('.start-btn')].filter((e) => !e.hidden);
+      const last = list[list.length - 1].getBoundingClientRect();
+      return { n: list.length, bottom: Math.round(last.bottom), vh: window.innerHeight,
+               resume: !document.getElementById('go-resume').hidden };
+    });
+    ok(withResume.resume && withResume.n === 6,
+      `塗りかけがあると「つづきから」が増えて ${withResume.n} 個になる`);
+    ok(withResume.bottom <= withResume.vh,
+      `6個でも、いちばん下の段が画面に収まる (${withResume.bottom}px / 画面 ${withResume.vh}px)`);
+    await small.close();
+
     await start(phone, 'normal');
     ok(true, '難易度を選ぶと窓が組み上がる');
 
@@ -369,7 +415,9 @@ async function run() {
     // ------------------------------------------------ 難易度
     section('難易度');
     const counts = {};
-    for (const key of ['easy', 'normal', 'hard', 'vhard']) {
+    const DIFFS = await phone.evaluate(() => window.Core.DIFF_ORDER);
+    ok(DIFFS.length === 5, `段は ${DIFFS.length} 段 (${DIFFS.join(' / ')})`);
+    for (const key of DIFFS) {
       await draw(phone, key);
       const s = await state(phone);
       counts[key] = s.cells.length;
@@ -393,32 +441,37 @@ async function run() {
       ok(tap.worst >= 18 && tap.orphan === 0,
         `${key}: 押せるセルはどれも ${tap.worst}px 以上(押せないセルは ${tap.orphan} 枚)`);
     }
-    ok(counts.easy < counts.normal && counts.normal < counts.hard && counts.hard < counts.vhard,
+    ok(DIFFS.every((k, i) => i === 0 || counts[DIFFS[i - 1]] < counts[k]),
       `難易度が上がるほど枚数が増える (${JSON.stringify(counts)})`);
 
-    // 同じ難易度を引き直しても、手応えが別物にならないか
-    // (以前は normal で 12 枚の窓と 48 枚の窓が出ていた)
-    for (const key of ['easy', 'normal', 'hard', 'vhard']) {
+    // 同じ難易度を引き直しても、手応えが別物にならないか。
+    // 以前は normal で 12枚と48枚、easy で 8枚と18枚の窓が出ていた。
+    // いまは出来上がりの押す枚数を見て、帯から外れたら引き直している
+    for (const key of DIFFS) {
       const draws = [];
-      for (let i = 0; i < 12; i++) {
+      for (let i = 0; i < 14; i++) {
         await draw(phone, key);
         const s = await state(phone);
-        draws.push(s.hosts.filter((h, k) => h === k).length);
+        draws.push(s.remain);
       }
-      const target = await phone.evaluate((k) => window.Core.DIFF_TARGET[k], key);
-      // 幅は core.test.js の「目標のまわりに収まる」と同じ決まりにする。
-      // ランダム枠は菱形割りで一度に5枚増えるので、少ない難易度ほど上に振れる
+      const { target, slack } = await phone.evaluate((k) => ({
+        target: window.Core.DIFF_TARGET[k], slack: window.Core.fitSlack(window.Core.DIFF_TARGET[k]),
+      }), key);
+      const out = draws.filter((n) => !(Math.abs(n - target) <= slack));
       const lo = Math.min(...draws), hi = Math.max(...draws);
-      const floor = target * 0.6, ceil = target * 1.3 + 6;
-      ok(lo >= floor && hi <= ceil,
-        `${key}: 12回引いても ${lo}〜${hi} 回で収まる (目安 ${Math.round(floor)}〜${Math.round(ceil)})`);
-      // easy は枚数が少ないので、比で見ると1枚の差が大きく響く。枚数の差で見る
-      if (target < 20) {
-        ok(hi - lo <= 10, `${key}: いちばん多い窓と少ない窓の差が ${hi - lo} 枚 (10枚まで)`);
-      } else {
-        ok(hi / lo <= 2, `${key}: いちばん多い窓と少ない窓の差が 2 倍以内 (${(hi / lo).toFixed(1)} 倍)`);
-      }
+      ok(out.length === 0,
+        `${key}: 14回引いても ${lo}〜${hi} 枚 (目標 ${target} ± ${slack.toFixed(1)})`);
+      ok(hi / lo <= 2,
+        `${key}: いちばん多い窓と少ない窓の差が 2 倍以内 (${(hi / lo).toFixed(1)} 倍)`);
     }
+
+    // 段の間隔がそろっているか(easy→normal だけが4倍の崖だった)
+    const ladder = await phone.evaluate(() => {
+      const t = window.Core.DIFF_ORDER.map((k) => window.Core.DIFF_TARGET[k]);
+      return t.slice(1).map((n, i) => n / t[i]);
+    });
+    ok(Math.max(...ladder) / Math.min(...ladder) <= 1.5,
+      `段の間隔がそろっている (${ladder.map((r) => r.toFixed(2) + '倍').join(' / ')})`);
 
     // ------------------------------------------------ 埋めきる
     section('埋めきる');
