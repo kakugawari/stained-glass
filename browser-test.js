@@ -442,11 +442,52 @@ async function run() {
     });
     ok(pick.ok, `選んだ色「${pick.name}」の硝子が嵌まる (${pick.got})`);
 
-    // 帯からはみ出す数になっても、なぞって出せる
-    ok(await phone.evaluate(() => {
+    // 色は二段に並び、全部が見えている(なぞらずに押せる)
+    const rows = await phone.evaluate(() => {
+      const sw = [...document.querySelectorAll('.swatch')];
+      const tops = [...new Set(sw.map((e) => Math.round(e.getBoundingClientRect().top)))];
       const row = document.getElementById('swatches');
-      return getComputedStyle(row).overflowX === 'auto';
-    }), '色が増えて入りきらない時は、なぞって出せる');
+      const r = row.getBoundingClientRect();
+      const outside = sw.filter((e) => {
+        const b = e.getBoundingClientRect();
+        return b.left < r.left - 1 || b.right > r.right + 1 ||
+               b.top < r.top - 1 || b.bottom > r.bottom + 1;
+      }).length;
+      return { n: sw.length, lines: tops.length, outside,
+               scrollable: row.scrollWidth > row.clientWidth + 1 };
+    });
+    ok(rows.lines === 2, `色は二段に並ぶ (${rows.n} 色 / ${rows.lines} 段)`);
+    ok(rows.outside === 0 && !rows.scrollable,
+      `どの色も帯の中に見えている (はみ出し ${rows.outside} 個)`);
+
+    // 20色そろっても、全部が見えていて、押せる大きさを割らないか
+    await phone.evaluate(() => {
+      localStorage.setItem('stained-glass:progress',
+        JSON.stringify({ cleared: 40, frame: 'kokutan' }));
+    });
+    await phone.reload();
+    await phone.waitForFunction(() => window.__app);
+    await start(phone, 'normal');
+    const full = await phone.evaluate(() => {
+      const sw = [...document.querySelectorAll('.swatch')];
+      const tops = [...new Set(sw.map((e) => Math.round(e.getBoundingClientRect().top)))];
+      const row = document.getElementById('swatches').getBoundingClientRect();
+      const outside = sw.filter((e) => {
+        const b = e.getBoundingClientRect();
+        return b.left < row.left - 1 || b.right > row.right + 1;
+      }).length;
+      return { n: sw.length, lines: tops.length, outside,
+               tap: Math.round(sw[0].getBoundingClientRect().width) };
+    });
+    ok(full.n === 20 && full.outside === 0,
+      `色が 20 になっても全部見えている (${full.lines} 段 / はみ出し ${full.outside} 個)`);
+    /* 詰まってきたら丸は小さくなるが、32px は割らない (割るなら段を増やす) */
+    ok(full.tap >= 32, `詰まっても押せる大きさを割らない (${full.tap}px)`);
+    ok(full.lines <= 3, `段が増えても三段まで (${full.lines} 段)`);
+    await phone.evaluate(() => localStorage.removeItem('stained-glass:progress'));
+    await phone.reload();
+    await phone.waitForFunction(() => window.__app);
+    await start(phone, 'normal');
 
     // ------------------------------------------------ 硝子棚
     section('硝子棚');

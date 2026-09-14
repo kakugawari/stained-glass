@@ -252,20 +252,14 @@
   #ask .btn { font-size: 12px; padding: 6px 12px; }
   #ask-yes { border-color: rgba(var(--accent),0.7); }
 
-  /* 色は増えていくので、入りきらない時は横になぞって出す。
-     端をぼかして「まだ先がある」と分かるようにする */
+  /* 色は二段に並べる。持っている色が全部、一目で見えて、なぞらずに押せる。
+     一段あたりの数と丸の大きさは layoutSwatches() が実寸から決める */
   #swatches {
-    display: flex; gap: 2px; flex-wrap: nowrap;
-    max-width: 100%; overflow-x: auto; overflow-y: hidden;
-    scrollbar-width: none; -ms-overflow-style: none;
-    padding: 0 10px;
-    scroll-padding: 10px;
-    -webkit-overflow-scrolling: touch;
-    touch-action: pan-x;
-    mask-image: linear-gradient(to right, transparent 0, #000 14px,
-                                #000 calc(100% - 14px), transparent 100%);
+    display: grid;
+    grid-template-columns: repeat(var(--sw-cols, 5), var(--sw-size, 44px));
+    justify-content: center;
+    max-width: 100%;
   }
-  #swatches::-webkit-scrollbar { display: none; }
   /* 横向き(背の低い画面)では、操作帯を右の端へ。縦の場所を窓に譲る */
   @media (orientation: landscape) and (max-height: 560px) {
     #bar {
@@ -274,12 +268,10 @@
       padding: 8px calc(8px + env(safe-area-inset-right)) 8px 12px;
       background: linear-gradient(to left, rgba(var(--bar-fade),0.92), rgba(var(--bar-fade),0));
     }
+    /* 横向きでは、帯が右端に縦に立つ。段ではなく列で二列に並べる */
     #swatches {
-      display: flex; flex-direction: column; flex-wrap: nowrap;
-      overflow-x: hidden; overflow-y: auto; max-height: 100%;
-      padding: 10px 0; touch-action: pan-y;
-      mask-image: linear-gradient(to bottom, transparent 0, #000 14px,
-                                  #000 calc(100% - 14px), transparent 100%);
+      grid-template-columns: repeat(var(--sw-cols, 2), var(--sw-size, 44px));
+      align-content: center;
     }
     #buttons  { display: grid; grid-template-columns: repeat(2, auto); gap: 6px; }
     #ask {
@@ -287,15 +279,18 @@
       max-width: 58vw; margin: 0;
     }
   }
-  /* 押せる所(44px)と、見える丸(34px)を分ける */
+  /* 押せる所と、見える丸を分ける。押せる所は 44px を上限に、
+     入る数に合わせて詰める (下限 32px。それも入らない時は段を増やす) */
   .swatch {
-    width: 44px; height: 44px; flex-shrink: 0;
+    width: var(--sw-size, 44px); height: var(--sw-size, 44px); flex-shrink: 0;
     display: flex; align-items: center; justify-content: center;
     padding: 0; border: none; background: none;
     cursor: pointer; -webkit-tap-highlight-color: transparent;
   }
   .swatch i {
-    display: block; width: 34px; height: 34px; border-radius: 50%;
+    display: block;
+    width: calc(var(--sw-size, 44px) - 8px); height: calc(var(--sw-size, 44px) - 8px);
+    border-radius: 50%;
     border: 1px solid rgba(var(--ink),0.25);
     transition: transform 0.15s ease, box-shadow 0.15s ease;
   }
@@ -592,6 +587,7 @@ function resize() {
   glassCv.width = W * DPR; glassCv.height = H * DPR;
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
   glassCtx.setTransform(DPR, 0, 0, DPR, 0, 0);
+  layoutSwatches();     /* 帯の高さは丸の並べ方で決まる。窓を組む前に決める */
   barBox = null;        /* 画面の大きさが変われば、操作帯も測り直す */
   layoutPanel();
   refreshHosts();
@@ -635,14 +631,41 @@ function rebuildSwatches() {
     });
     swatchesEl.appendChild(el);
   }
+  layoutSwatches();
   barBox = null;        /* 中身が変われば帯の高さも測り直す */
-  scrollSwatchIntoView();
 }
 
-/* 選んでいる色が画面の外にある時だけ、見える所へ寄せる */
-function scrollSwatchIntoView() {
-  const el = swatchesEl.querySelector(".swatch.active");
-  if (el && el.scrollIntoView) el.scrollIntoView({ block: "nearest", inline: "center" });
+/* ------------------------------------------------------------
+   色の丸の並べ方を決める
+   ------------------------------------------------------------
+   持っている色は全部、なぞらずに見えていてほしい。そこで二段に並べる。
+   一段あたりの数は「色の数の半分」。そこから、画面の幅に入る大きさを出す。
+   押せる所は 44px (Apple の目安) を上限に、詰まってきたら小さくする。
+   32px を切るくらい詰まるなら、小さくするより段を増やす。
+   横向きのときは帯が右端に縦に立つので、幅ではなく高さで同じことをする。
+   ------------------------------------------------------------ */
+const SW_MAX = 44, SW_MIN = 32;
+
+function layoutSwatches() {
+  const n = swatchesEl.childElementCount;
+  if (n === 0) return;
+  /* resize() より先に呼ばれることがあるので、実寸は窓から直に取る */
+  const vw = W || window.innerWidth, vh = H || window.innerHeight;
+  const sideBar = vw > vh && vh <= 560;     /* 横向き = 帯が右端に立つ */
+  const room = (sideBar ? vh : vw) - 16;    /* 帯の内側で使える長さ */
+
+  let lines = 2, size = 0, per = 0;
+  for (; lines <= 4; lines++) {
+    per = Math.ceil(n / lines);
+    size = Math.min(SW_MAX, Math.floor(room / per));
+    if (size >= SW_MIN) break;
+  }
+  /* 4段でも入らない画面なら、下限を割ってでも収める */
+  if (size < SW_MIN) size = Math.max(20, Math.floor(room / per));
+
+  /* 横向きは「列」が per に当たる。CSS 側は列数として受け取る */
+  swatchesEl.style.setProperty("--sw-cols", String(sideBar ? lines : per));
+  swatchesEl.style.setProperty("--sw-size", size + "px");
 }
 
 function pickShade() {
@@ -897,7 +920,6 @@ function enterPlay() {
   toTitleEl.hidden = false;
   resize();            /* 操作帯の高さが変わるので測り直す */
   updateRemain();
-  scrollSwatchIntoView();   /* 色が増えて帯がのびても、選んでいる色は見える所に */
 }
 
 function startNew(diffKey) {
