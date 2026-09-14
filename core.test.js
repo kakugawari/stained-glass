@@ -359,17 +359,24 @@ test('easy には縁取りを付けない(帯だけで枚数を使い切って�
 });
 
 test('縁取りを付けても、枚数が大きく落ちない', () => {
-  /* 小さい画面の四角窓・丸窓では帯が面積を食う。落ちるなら帯をあきらめる決まり */
+  /* 小さい画面の四角窓・丸窓では帯が面積を食う。落ちるなら帯をあきらめる決まり。
+     1枚ごとの枚数は割り方の運でぶれるので、平均で見る */
   for (const [PW, PH] of [[256, 414], [300, 484]]) {
     for (const shape of C.WINDOW_SHAPES) {
       const w = shape.ratio >= 1 ? Math.min(PW, PH) : PW, h = w / shape.ratio;
       for (const diff of ['normal', 'hard', 'vhard']) {
-        const make = (border) => C.makeWindow({ diff, shapePoly: shape.poly(), symmetric: true,
-                                                panelW: w, panelH: h, border }).length;
-        const plain = Math.max(make(false), make(false));
-        const bordered = Math.max(make(true), make(true));
-        assert.ok(bordered >= plain * 0.8,
-          `${shape.name} ${diff} ${PW}x${PH}: 縁なし ${plain} 枚 → 縁あり ${bordered} 枚 は落ちすぎ`);
+        const avg = (border) => {
+          let sum = 0;
+          for (let i = 0; i < 8; i++) {
+            sum += C.makeWindow({ diff, shapePoly: shape.poly(), symmetric: i % 2 === 0,
+                                  panelW: w, panelH: h, border }).length;
+          }
+          return sum / 8;
+        };
+        const plain = avg(false), bordered = avg(true);
+        assert.ok(bordered >= plain * 0.85,
+          `${shape.name} ${diff} ${PW}x${PH}: 縁なし 平均 ${plain.toFixed(0)} 枚 → ` +
+          `縁あり 平均 ${bordered.toFixed(0)} 枚 は落ちすぎ`);
       }
     }
   }
@@ -478,6 +485,84 @@ test('向かいの辺を突き抜ける弧は入れない', () => {
   assert.strictEqual(C.bowFits(thin, 0, deep), false, '突き抜ける弧を通してしまう');
   const shallow = C.bowPoints([0, 0], [1, 0], -1, 4, 300, 300); /* 外向きに少しだけ */
   assert.strictEqual(C.bowFits(thin, 0, shallow), true, '入るはずの弧をはじいている');
+});
+
+test('窓の表情は3種類あり、割合の合計は1になる', () => {
+  assert.strictEqual(C.CURVE_STYLES.length, 3);
+  const sum = C.CURVE_STYLES.reduce((a, s) => a + s.weight, 0);
+  assert.ok(Math.abs(sum - 1) < 1e-9, `割合の合計が ${sum}`);
+  for (const s of C.CURVE_STYLES) {
+    assert.ok(s.weight > 0 && s.weight < 1, `${s.name}: 割合が変`);
+    assert.ok(s.chance >= 0 && s.chance <= 1, `${s.name}: 曲げる割合が変`);
+    assert.ok(s.bow >= 0 && s.bow < 0.5, `${s.name}: ふくらみが変`);
+  }
+  assert.ok(C.CURVE_STYLES.some(s => s.chance === 0), 'まっすぐな窓が出ない');
+  assert.ok(C.CURVE_STYLES.some(s => s.chance === 1), '曲線多めの窓が出ない');
+});
+
+test('表情の抽選は、決めた割合どおりになる', () => {
+  const counts = {};
+  for (let i = 0; i < 10000; i++) {
+    const name = C.pickCurveStyle().name;
+    counts[name] = (counts[name] || 0) + 1;
+  }
+  for (const s of C.CURVE_STYLES) {
+    const got = (counts[s.name] || 0) / 10000;
+    assert.ok(Math.abs(got - s.weight) < 0.03,
+      `${s.name}: ${(got * 100).toFixed(1)}% (決めたのは ${(s.weight * 100).toFixed(0)}%)`);
+  }
+  /* 端の値でも、ちゃんと最初と最後を引ける */
+  assert.strictEqual(C.pickCurveStyle(() => 0).name, C.CURVE_STYLES[0].name);
+  assert.strictEqual(C.pickCurveStyle(() => 0.999999).name, C.CURVE_STYLES[2].name);
+});
+
+test('「曲げる割合 0」なら、鉛線は1本も曲がらない', () => {
+  const shape = C.WINDOW_SHAPES[0];
+  const [PW, PH] = SHAPE_PANELS(shape);
+  const points = (cells) => cells.reduce((a, c) => a + c.length, 0);
+  for (let t = 0; t < 4; t++) {
+    const flat = C.conformCells(C.makeWindow({ diff: 'hard', shapePoly: shape.poly(),
+      symmetric: t % 2 === 0, panelW: PW, panelH: PH, border: true }), PW, PH);
+
+    const straight = C.curveLeading(flat, { panelW: PW, panelH: PH, chance: 0, bow: 0 });
+    assert.deepStrictEqual(straight, flat, '曲げないはずが、形が変わっている');
+
+    const flowing = C.curveLeading(flat, { panelW: PW, panelH: PH, chance: 1, bow: 0.16 });
+    assert.ok(points(flowing) > points(flat), '曲線多めなのに、弧が入っていない');
+  }
+  /* 表情の表にも、曲げない窓と曲線多めの窓がある */
+  assert.ok(C.CURVE_STYLES.some(s => s.chance === 0) && C.CURVE_STYLES.some(s => s.chance === 1));
+});
+
+test('曲げても、硝子は窓の外へはみ出さない', () => {
+  /* 窓のふちの辺を曲げると外へふくらむ。切り抜きで出た細片は同じ辺を2回持つので、
+     「2枚が共有している」と見えてしまう。別のセルどうしかどうかまで見る */
+  const distToBoundary = (p, poly) => {
+    let d = Infinity;
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], b = poly[(i + 1) % poly.length];
+      const ex = b[0] - a[0], ey = b[1] - a[1];
+      const l2 = ex * ex + ey * ey || 1e-18;
+      const t = Math.max(0, Math.min(1, ((p[0] - a[0]) * ex + (p[1] - a[1]) * ey) / l2));
+      d = Math.min(d, Math.hypot(p[0] - (a[0] + ex * t), p[1] - (a[1] + ey * t)));
+    }
+    return d;
+  };
+  for (const shape of C.WINDOW_SHAPES) {
+    const poly = C.cleanPoly(shape.poly());
+    const [PW, PH] = SHAPE_PANELS(shape);
+    for (let t = 0; t < 4; t++) {
+      const cells = C.makeWindow({ diff: 'hard', shapePoly: poly, symmetric: t % 2 === 0,
+        panelW: PW, panelH: PH, border: t % 2 === 1, curve: true, curveChance: 1, curveBow: 0.16 });
+      for (const cell of cells) {
+        for (const p of cell) {
+          if (C.pointInPoly(p[0], p[1], poly)) continue;
+          assert.ok(distToBoundary(p, poly) * PW < 0.05,
+            `${shape.name}: 窓の外に ${(distToBoundary(p, poly) * PW).toFixed(2)}px はみ出した`);
+        }
+      }
+    }
+  }
 });
 
 test('左右対称の窓は、曲げても左右対称のまま', () => {

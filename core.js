@@ -834,6 +834,30 @@
     return out;
   }
 
+  /* セルの並びが左右対称か(重心で見る)。
+     並べ替えて突き合わせると浮動小数の微差で順番が入れ替わるので、
+     いちばん近い重心と1対1に対応づく かどうかで見る */
+  function mirrorSymmetric(cells, eps = 1e-6) {
+    const mid = (cs) => cs.map(c => {
+      let x = 0, y = 0;
+      for (const p of c) { x += p[0]; y += p[1]; }
+      return [x / c.length, y / c.length];
+    });
+    const a = mid(cells), b = mid(cells.map(c => c.map(p => [1 - p[0], p[1]])));
+    const used = new Array(b.length).fill(false);
+    for (const p of a) {
+      let best = -1, bestD = Infinity;
+      for (let i = 0; i < b.length; i++) {
+        if (used[i]) continue;
+        const d = Math.hypot(p[0] - b[i][0], p[1] - b[i][1]);
+        if (d < bestD) { bestD = d; best = i; }
+      }
+      if (best < 0 || bestD > eps) return false;
+      used[best] = true;
+    }
+    return true;
+  }
+
   /* 鉛線を弧へ。cells は conformCells を通したもの。
      opts: chance(曲げる割合) bow(ふくらみ/辺の長さ) minLenPx keep(曲げないセル番号)
            symmetric(左右対称の窓なら、曲げ方も鏡写しにする) rand */
@@ -876,7 +900,10 @@
     for (const [k, rec] of edges) {
       if (done.has(k)) continue;
       done.add(k);
-      if (rec.length !== 2) continue;                             /* 窓のふちは曲げない */
+      /* 曲げてよいのは「別々の2枚が共有している辺」だけ。
+         窓のふちの辺(1枚しか持たない)を曲げると、硝子が窓の外へはみ出す。
+         切り抜きで出た細片は、同じ辺を2回持つことがあるので、別のセルかどうかも見る */
+      if (rec.length !== 2 || rec[0].ci === rec[1].ci) continue;
       if (keep.has(rec[0].ci) || keep.has(rec[1].ci)) continue;   /* 帯は曲げない */
       const c0 = cells[rec[0].ci];
       const a = c0[rec[0].i], b = c0[(rec[0].i + 1) % c0.length];
@@ -888,6 +915,9 @@
          真ん中の線の上に載っている辺は、曲げると必ず左右が食い違うので、そのまま */
       const pair = opts.symmetric && mk !== k && edges.has(mk);
       if (pair) done.add(mk);
+      if (opts.symmetric && mk !== k && !pair) continue;   /* 鏡写しの相手が見つからない:
+          片側だけ曲がると端正さが崩れるので、両方ともまっすぐのままにする
+          (座標の末尾のけたの違いで、まれに見つからないことがある) */
       if (opts.symmetric && mk === k &&
           Math.abs(a[0] - 0.5) < 1e-6 && Math.abs(b[0] - 0.5) < 1e-6) continue;
 
@@ -928,15 +958,43 @@
     });
     const k2 = (c, i) => key(c[i], c[(i + 1) % c.length]);
 
-    /* 弧は1本ずつ確かめて入れているが、同じセルに2本入ると弧どうしが交わることがある。
-       出来上がりを検めて、壊れていたらそのセルの弧を1本ずつ外す */
-    for (let pass = 0; pass < 8; pass++) {
-      const out = apply();
-      let broken = -1;
-      for (let ci = 0; ci < out.length; ci++) if (selfCrosses(out[ci])) { broken = ci; break; }
-      if (broken < 0) return out;
-      const c = cells[broken];
-      let drop = null, worst = -1;
+    /* 左右対称の窓は、曲げても左右対称でなければ受け取らない。
+       座標の末尾のけたの違いで鏡写しの辺をたどれないことが、まれにある
+       (実測 4000枚に2枚)。そのときは曲げずに返す。片側だけ曲がるより良い */
+    const done2 = (out) => (opts.symmetric && !mirrorSymmetric(out)) ? cells : out;
+
+    /* 面積の合計は、曲げても変わらないはず(弧は隣どうしで分け合うので、
+       片方が増えたぶん相手が減る)。変わっていたら、どこかで重なっている */
+    const sumArea = (cs) => cs.reduce((a, c) => a + Math.abs(polyArea(c)), 0);
+    const baseArea = sumArea(cells);
+
+    /* 重なっているセルを1枚見つける(面積が合わない時だけ呼ぶ) */
+    const findOverlap = (out) => {
+      const box = out.map(c => {
+        const xs = c.map(p => p[0]), ys = c.map(p => p[1]);
+        return [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)];
+      });
+      for (let i = 0; i < out.length; i++) {
+        for (let j = i + 1; j < out.length; j++) {
+          if (box[i][2] < box[j][0] || box[j][2] < box[i][0] ||
+              box[i][3] < box[j][1] || box[j][3] < box[i][1]) continue;
+          for (const p of out[i]) {
+            if (!pointInPoly(p[0], p[1], out[j])) continue;
+            /* 角どうしが触れているだけなら見逃す */
+            if (out[j].some(q => Math.abs(q[0] - p[0]) < 1e-9 && Math.abs(q[1] - p[1]) < 1e-9)) continue;
+            return [i, j];
+          }
+        }
+      }
+      return null;
+    };
+
+    /* 弧は1本ずつ確かめて入れているが、同じセルに2本入ったり、弧どうしが
+       隣を越えてぶつかったりする。出来上がりを検めて、壊れていたら弧を1本ずつ外す */
+    /* そのセルの弧を1本(いちばんふくらんでいるもの)外す。外せたら true */
+    const dropBowOf = (ci) => {
+      const c = cells[ci];
+      let drop = null, dropEnds = null, worst = -1;
       for (let i = 0; i < c.length; i++) {
         const k = k2(c, i);
         const pts = bows.get(k);
@@ -949,12 +1007,55 @@
           const len = Math.hypot(ex, ey) || 1;
           d = Math.max(d, Math.abs(((p[0] - a[0]) * panelW * ey - (p[1] - a[1]) * panelH * ex) / len));
         }
-        if (d > worst) { worst = d; drop = k; }
+        if (d > worst) { worst = d; drop = k; dropEnds = [a, b]; }
       }
-      if (!drop) break;      /* 弧が無いのに壊れている = ここでは直せない */
+      if (!drop) return false;      /* このセルには弧が無い */
       bows.delete(drop);
+      /* 左右対称の窓では、鏡写しの弧も一緒に外す(片側だけ残ると端正さが崩れる) */
+      if (opts.symmetric) {
+        bows.delete(key([1 - dropEnds[0][0], dropEnds[0][1]], [1 - dropEnds[1][0], dropEnds[1][1]]));
+      }
+      return true;
+    };
+
+    for (let pass = 0; pass < 12; pass++) {
+      const out = apply();
+      let broken = -1, other = -1;
+      for (let ci = 0; ci < out.length; ci++) if (selfCrosses(out[ci])) { broken = ci; break; }
+      if (broken < 0 && Math.abs(sumArea(out) - baseArea) > 1e-9) {
+        const pairFound = findOverlap(out);
+        if (pairFound) { broken = pairFound[0]; other = pairFound[1]; }
+      }
+      if (broken < 0) return done2(out);
+      /* 重なっているセル自身に弧が無いこともある(隣の弧が食い込んでいる)。
+         その時は相手側の弧を外す */
+      if (!dropBowOf(broken) && (other < 0 || !dropBowOf(other))) break;
     }
-    return apply();
+    return done2(apply());
+  }
+
+  /* ============================================================
+     窓の表情(鉛線をどれだけ曲げるか)
+     ------------------------------------------------------------
+     窓ごとに引く。まっすぐな窓と曲線の窓がはっきり混ざるほうが、
+     引き直す楽しみになる。
+     ============================================================ */
+  const CURVE_STYLES = [
+    { name: 'straight', weight: 0.20, chance: 0,   bow: 0 },     /* 直線だけ */
+    { name: 'mixed',    weight: 0.45, chance: 0.5, bow: 0.11 },  /* 直線に弧を混ぜる */
+    { name: 'flowing',  weight: 0.35, chance: 1,   bow: 0.16 },  /* 曲線多め */
+  ];
+  /* 手作りの幾何学枠(窓の35%)はいつも直線なので、全体では
+     直線だけ 48% / ほどほど 29% / 曲線多め 23% になる */
+
+  function pickCurveStyle(rand) {
+    const r = (rand || Math.random)();
+    let acc = 0;
+    for (const s of CURVE_STYLES) {
+      acc += s.weight;
+      if (r < acc) return s;
+    }
+    return CURVE_STYLES[CURVE_STYLES.length - 1];
   }
 
   /* ============================================================
@@ -1006,15 +1107,16 @@
     };
 
     const cells = build(withBorder);
-    if (!withBorder || cells.length >= target * 0.8) return finish(cells, cells.ringCount || 0);
+    if (!withBorder || cells.length >= target * 0.9) return finish(cells, cells.ringCount || 0);
 
     /* 小さい画面の四角窓・丸窓では、帯が面積を食って枚数が落ちる。
        そういう時は帯をあきらめ、目標に近いほうを採る
        (同じ難易度なら同じ手応え、を枚数で守る) */
+    /* 帯のぶん枚数が落ちるのは構わないが、落ちすぎるなら帯をあきらめる */
     const plain = build(false);
-    return Math.abs(plain.length - target) < Math.abs(cells.length - target)
-      ? finish(plain, 0)
-      : finish(cells, cells.ringCount || 0);
+    return cells.length >= plain.length * 0.85
+      ? finish(cells, cells.ringCount || 0)
+      : finish(plain, 0);
   }
 
   /* ============================================================
@@ -1112,6 +1214,7 @@
     DIFF_TARGET, DIFF_MIN_PX, randomFrame,
     insetConvex, ringCells, borderPlan, makeWindow, BORDER_MIN_TARGET,
     conformCells, curveLeading, bowPoints, segmentsCross, bowFits,
+    CURVE_STYLES, pickCurveStyle, mirrorSymmetric,
     TAP_MIN_PX, attachSlivers,
     SAVE_VERSION, packWindow, unpackWindow,
   };
