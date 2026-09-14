@@ -168,7 +168,48 @@
     border-color: rgba(var(--ink),0.85);
   }
   .shelf-item.picked { color: rgba(var(--accent),1); }
-  #shelf-close { align-self: center; margin-top: 18px; }
+  #shelf-close { align-self: center; margin: 18px 0 4px; }
+
+  /* ===== 飾った窓 ===== */
+  .works-grid {
+    display: grid; grid-template-columns: repeat(4, 1fr);
+    gap: 8px; justify-items: center;
+  }
+  .work {
+    width: 100%; padding: 0; border: none; background: none;
+    cursor: pointer; -webkit-tap-highlight-color: transparent;
+  }
+  .work canvas {
+    display: block; width: 100%; height: auto;
+    border-radius: 2px;
+    box-shadow: 0 1px 5px rgba(0,0,0,0.3);
+    transition: transform 0.15s ease;
+  }
+  .work:active canvas { transform: scale(0.94); }
+  .works-empty {
+    grid-column: 1 / -1; text-align: center; padding: 10px 0 4px;
+    color: rgba(var(--ink-soft),0.55);
+    font-size: 11px; letter-spacing: 0.14em; line-height: 1.7;
+  }
+
+  /* ===== 飾った窓を大きく見る ===== */
+  #viewer {
+    position: fixed; inset: 0; z-index: 8;
+    display: flex; flex-direction: column;
+    align-items: center; justify-content: center; gap: 14px;
+    padding: calc(14px + env(safe-area-inset-top)) 16px
+             calc(14px + env(safe-area-inset-bottom));
+    background: var(--start-bg);
+  }
+  #viewer[hidden] { display: none; }
+  #viewer-cv { max-width: 100%; border-radius: 3px; }
+  #viewer-note {
+    text-align: center; line-height: 1.7;
+    color: rgba(var(--ink-soft),0.8);
+    font-size: 11.5px; letter-spacing: 0.16em;
+  }
+  #viewer-btns { display: flex; gap: 10px; }
+  #viewer-drop { border-color: rgba(190,80,70,0.55); color: rgba(210,120,110,1); }
 
   /* ===== タイトルへもどる ===== */
   #to-title {
@@ -330,7 +371,18 @@
   <div class="shelf-grid" id="shelf-colors"></div>
   <h3>木 枠</h3>
   <div class="shelf-grid" id="shelf-frames"></div>
+  <h3 id="shelf-works-head">飾 っ た 窓</h3>
+  <div class="works-grid" id="shelf-works"></div>
   <button id="shelf-close" class="btn">とじる</button>
+</div>
+
+<div id="viewer" hidden>
+  <canvas id="viewer-cv"></canvas>
+  <div id="viewer-note"></div>
+  <div id="viewer-btns">
+    <button id="viewer-close" class="btn">もどる</button>
+    <button id="viewer-drop" class="btn">この窓を捨てる</button>
+  </div>
 </div>
 <div id="remain" class="hidden"></div>
 <button id="to-title" aria-label="タイトルへもどる" hidden>&#8592;</button>
@@ -397,6 +449,7 @@ const {
   pickCurveStyle, buildInBand,
   FRAMES, unlockedColors, unlockedFrames, nextUnlock, newlyUnlocked,
   packWindow, unpackWindow,
+  SHELF_MAX, packShelf, unpackShelf, addToShelf,
 } = window.Core;
 
 /* ============================================================
@@ -425,6 +478,36 @@ function saveProgress() {
 }
 const curFrame = () => FRAMES.find(f => f.key === frameKey) || FRAMES[0];
 loadProgress();
+
+/* ============================================================
+   飾り棚 — 仕上げた窓をとっておく (上限 SHELF_MAX 枚)
+   ------------------------------------------------------------
+   窓の記録とは別の引き出しにしまう。どちらかが壊れても、
+   もう一方は無事でいられるように。
+   ============================================================ */
+const SHELF_KEY = "stained-glass:shelf";
+let shelf = [];        /* 古い順。[{ at, win }] */
+
+function loadShelf() {
+  try {
+    shelf = unpackShelf(JSON.parse(localStorage.getItem(SHELF_KEY)));
+  } catch (e) { shelf = []; /* 読めなくても遊べる */ }
+}
+
+/* しまう。入りきらなければ、古いほうから捨てて入れ直す
+   (端末の空きは分からないので、断られたら減らして試す) */
+function saveShelf() {
+  for (let give = 0; give < 4; give++) {
+    try {
+      localStorage.setItem(SHELF_KEY, JSON.stringify(
+        shelf.slice(give).map(it => packShelf(it.win, it.at))));
+      if (give > 0) shelf = shelf.slice(give);
+      return true;
+    } catch (e) { /* 入らない。古いものを1枚あきらめて、もう一度 */ }
+  }
+  return false;
+}
+loadShelf();
 
 /* 縁取りの帯をめぐらせる割合(たまに縁のない窓も出す) */
 const BORDER_CHANCE = 0.7;
@@ -956,42 +1039,55 @@ function shapePath(c) {
   c.closePath();
 }
 
-function redrawGlass() {
-  glassCtx.clearRect(0, 0, W, H);
-  for (let i = 0; i < cells.length; i++) {
-    const poly = cells[i];
-    cellPath(glassCtx, poly);
-    if (fills[i]) {
-      glassCtx.fillStyle = fills[i];
-      glassCtx.globalAlpha = theme.glassAlpha;
-      glassCtx.fill();
-      const mid = mids[i] || insidePoint(poly);
-      const cx = ux(mid[0]), cy = vy(mid[1]);
-      const rad = Math.max(8, Math.hypot(ux(poly[0][0]) - cx, vy(poly[0][1]) - cy));
+/* ------------------------------------------------------------
+   硝子を描く。遊ぶ画面でも、飾り棚の小さな絵でも、同じ手で描く。
+   x/y/w/h は描く場所。lead は鉛線の太さ (小さく描く時は細くする)。
+   mid は「中の一点」の控え (無ければその場で出す)
+   ------------------------------------------------------------ */
+function paintGlass(c, list, paint, box, lead, mid) {
+  const px = (u) => box.x + u * box.w, py = (v) => box.y + v * box.h;
+  for (let i = 0; i < list.length; i++) {
+    const poly = list[i];
+    c.beginPath();
+    c.moveTo(px(poly[0][0]), py(poly[0][1]));
+    for (let k = 1; k < poly.length; k++) c.lineTo(px(poly[k][0]), py(poly[k][1]));
+    c.closePath();
+    c.lineJoin = "round";
+    if (paint[i]) {
+      c.fillStyle = paint[i];
+      c.globalAlpha = theme.glassAlpha;
+      c.fill();
+      const m = (mid && mid[i]) || insidePoint(poly);
+      const cx = px(m[0]), cy = py(m[1]);
+      const rad = Math.max(4, Math.hypot(px(poly[0][0]) - cx, py(poly[0][1]) - cy));
       /* 光の差し込み。暗い硝子ほど控えめにする。
          どの色にも同じだけ白を足すと、深い藍も深い臙脂も中間色になり、
          同じ系統の濃淡も見分けがつかなくなる */
-      const glow = theme.glowBase + theme.glowScale * relLuminance(fills[i]);
-      const g = glassCtx.createRadialGradient(cx, cy, 0, cx, cy, rad);
+      const glow = theme.glowBase + theme.glowScale * relLuminance(paint[i]);
+      const g = c.createRadialGradient(cx, cy, 0, cx, cy, rad);
       g.addColorStop(0, `rgba(255,255,255,${glow})`);
       g.addColorStop(1, "rgba(255,255,255,0)");
-      glassCtx.fillStyle = g;
-      glassCtx.fill();
-      glassCtx.globalAlpha = 1;
-      glassCtx.strokeStyle = theme.lead;
-      glassCtx.lineWidth = theme.leadWidth;
-      glassCtx.lineJoin = "round";
-      glassCtx.stroke();
+      c.fillStyle = g;
+      c.fill();
+      c.globalAlpha = 1;
+      c.strokeStyle = theme.lead;
+      c.lineWidth = lead;
+      c.stroke();
     } else {
-      glassCtx.fillStyle = theme.emptyFill;
-      glassCtx.globalAlpha = 1;
-      glassCtx.fill();
-      glassCtx.strokeStyle = theme.emptyStroke;
-      glassCtx.lineWidth = 1.2;
-      glassCtx.lineJoin = "round";
-      glassCtx.stroke();
+      c.fillStyle = theme.emptyFill;
+      c.globalAlpha = 1;
+      c.fill();
+      c.strokeStyle = theme.emptyStroke;
+      c.lineWidth = Math.max(0.5, lead * 0.4);
+      c.stroke();
     }
   }
+}
+
+function redrawGlass() {
+  glassCtx.clearRect(0, 0, W, H);
+  paintGlass(glassCtx, cells, fills, { x: PX, y: PY, w: PW, h: PH },
+             theme.leadWidth, mids);
 }
 
 /* ============================================================
@@ -1135,26 +1231,54 @@ function fillGroup(h, defer) {
   }
 }
 
-/* 窓を1つ仕上げた。棚に何か増えたら知らせる */
+/* 窓を1つ仕上げた。棚に飾り、何か増えたら知らせる */
 function countCleared() {
   const before = cleared;
   cleared++;
   saveProgress();
+  const full = shelf.length >= SHELF_MAX;
+  /* しまう形に通してから戻す。こうすると中身が今の窓と切り離されるので、
+     仕上げたあとに色を差し替えても、飾った窓は変わらない */
+  const snapshot = unpackWindow(packWindow({
+    diff: curDiff, ratio: panelRatio, shape: curShape, handmade: curHandmade,
+    familyIdx, completed: true, cells, fills,
+  }));
+  const r = snapshot
+    ? addToShelf(shelf, { at: Date.now(), win: snapshot })
+    : { list: shelf, dropped: null };
+  shelf = r.list;
+  const kept = snapshot ? saveShelf() : false;
   const got = newlyUnlocked(before, cleared);
-  if (!got.length) return;
-  rebuildSwatches();            /* 増えた色は、その場で使える */
-  showUnlockNote(got);
+  if (got.length) rebuildSwatches();     /* 増えた色は、その場で使える */
+  showUnlockNote(got, kept ? (full ? "swap" : "kept") : "full");
 }
 
-/* 「棚に ○○ が加わりました」。鐘のあと、少し遅らせて出す */
-function showUnlockNote(got) {
-  const what = got.map(g => g.name).join(" と ");
-  const kind = got.every(g => g.kind === "frame") ? "木枠" : "硝子";
+/* 仕上げたあとの知らせ。鐘のあと、少し遅らせて出す。
+   増えた物があればそれを、無ければ「飾った」ことを伝える */
+function showUnlockNote(got, shelfState) {
+  const lines = [];
+  if (shelfState === "swap") {
+    lines.push(`棚に飾りました (いっぱいなので、いちばん古い窓と入れ替え)`);
+  } else if (shelfState === "full") {
+    lines.push(`棚に飾れませんでした (入れ物がいっぱいです)`);
+  } else if (shelfState === "kept") {
+    lines.push(`棚に飾りました (${shelf.length} / ${SHELF_MAX} 枚)`);
+  }
+  if (got.length) {
+    const what = got.map(g => g.name).join(" と ");
+    const kind = got.every(g => g.kind === "frame") ? "木枠" : "硝子";
+    lines.push(`硝子棚に ${kind}「${what}」が加わりました`);
+  }
+  if (!lines.length) return;
   clearTimeout(unlockTimer);
   unlockTimer = setTimeout(() => {
-    unlockEl.textContent = `硝子棚に ${kind}「${what}」が加わりました`;
+    unlockEl.textContent = "";
+    lines.forEach((t, i) => {
+      if (i) unlockEl.appendChild(document.createElement("br"));
+      unlockEl.appendChild(document.createTextNode(t));
+    });
     unlockEl.classList.add("show");
-    unlockTimer = setTimeout(() => unlockEl.classList.remove("show"), 4200);
+    unlockTimer = setTimeout(() => unlockEl.classList.remove("show"), 4600);
   }, 900);
 }
 
@@ -1434,7 +1558,7 @@ document.getElementById("theme-toggle").addEventListener("click", () => {
   applyTheme(theme.name === "day" ? THEMES.night : THEMES.day);
   try { localStorage.setItem(THEME_KEY, theme.name); } catch (e) { /* 保存できなくても遊べる */ }
   redrawGlass();
-  if (!shelfEl.hidden) buildShelf();   /* 棚を開いたまま壁を変えた時 */
+  if (!shelfEl.hidden) { buildShelf(); buildWorks(); }   /* 棚を開いたまま壁を変えた時 */
 });
 
 /* ============================================================
@@ -1492,8 +1616,131 @@ function buildShelf() {
   }
 }
 
+/* ------------------------------------------------------------
+   飾った窓を並べる。1枚ずつ小さな canvas に描く
+   ------------------------------------------------------------ */
+const shelfWorksEl = document.getElementById("shelf-works");
+const shelfWorksHeadEl = document.getElementById("shelf-works-head");
+
+/* 窓ひとつを、決まった大きさの canvas に描く(木枠も添える) */
+function paintWork(cv, item, w) {
+  const shape = WINDOW_SHAPES.find(x => x.key === item.win.shape);
+  const ratio = item.win.ratio || 0.62;
+  const h = Math.round(w / ratio);
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+  cv.width = w * dpr; cv.height = h * dpr;
+  cv.style.width = w + "px"; cv.style.height = h + "px";
+  const c = cv.getContext("2d");
+  c.setTransform(dpr, 0, 0, dpr, 0, 0);
+  c.clearRect(0, 0, w, h);
+
+  const b = Math.max(2, w * 0.05);          /* 木枠の太さ */
+  const box = { x: b, y: b, w: w - b * 2, h: h - b * 2 };
+  const poly = shape ? shape.poly() : UNIT_RECT;
+  const px = (u) => box.x + u * box.w, py = (v) => box.y + v * box.h;
+
+  /* 壁 → 硝子 → 木枠 の順に重ねる */
+  c.fillStyle = theme.wall[1];
+  c.fillRect(0, 0, w, h);
+  c.save();
+  c.beginPath();
+  c.moveTo(px(poly[0][0]), py(poly[0][1]));
+  for (let i = 1; i < poly.length; i++) c.lineTo(px(poly[i][0]), py(poly[i][1]));
+  c.closePath();
+  c.clip();
+  paintGlass(c, item.win.cells, item.win.fills, box, Math.max(0.6, w / 140));
+  c.restore();
+
+  c.beginPath();
+  c.moveTo(px(poly[0][0]), py(poly[0][1]));
+  for (let i = 1; i < poly.length; i++) c.lineTo(px(poly[i][0]), py(poly[i][1]));
+  c.closePath();
+  const wood = curFrame().wood;
+  const wg = c.createLinearGradient(box.x, box.y, box.x + box.w, box.y + box.h);
+  wg.addColorStop(0, wood[0]); wg.addColorStop(0.5, wood[1]); wg.addColorStop(1, wood[2]);
+  c.strokeStyle = wg; c.lineWidth = b * 2; c.lineJoin = "round";
+  c.stroke();
+  return h;
+}
+
+/* 窓の銘と、仕上げた日 */
+function workLabel(item) {
+  const f = item.win.handmade
+    ? HANDMADE.find(x => x.name === item.win.handmade)
+    : WINDOW_SHAPES.find(x => x.key === item.win.shape);
+  const d = new Date(item.at);
+  const when = `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日`;
+  return { name: (f && f.jp) || "窓", en: (f && f.name) || "", when,
+           pieces: item.win.cells.length };
+}
+
+function buildWorks() {
+  shelfWorksHeadEl.textContent = `飾 っ た 窓   ${shelf.length} / ${SHELF_MAX}`;
+  shelfWorksEl.textContent = "";
+  if (!shelf.length) {
+    const p = document.createElement("div");
+    p.className = "works-empty";
+    p.textContent = "窓をひとつ仕上げると、ここに飾られます";
+    shelfWorksEl.appendChild(p);
+    return;
+  }
+  /* 新しいものから並べる */
+  const cols = 4;
+  const w = Math.max(48, Math.floor((Math.min(W, 520) - 32 - (cols - 1) * 8) / cols));
+  for (const item of [...shelf].reverse()) {
+    const el = document.createElement("button");
+    el.type = "button";
+    el.className = "work";
+    const cv = document.createElement("canvas");
+    el.appendChild(cv);
+    paintWork(cv, item, w);
+    const lab = workLabel(item);
+    el.title = `${lab.name} ・ ${lab.pieces}枚 ・ ${lab.when}`;
+    el.setAttribute("aria-label", el.title);
+    el.addEventListener("click", () => openViewer(item));
+    shelfWorksEl.appendChild(el);
+  }
+}
+
+/* ------------------------------------------------------------
+   飾った窓を大きく見る / 捨てる
+   ------------------------------------------------------------ */
+const viewerEl = document.getElementById("viewer");
+const viewerCv = document.getElementById("viewer-cv");
+const viewerNoteEl = document.getElementById("viewer-note");
+let viewing = null;
+
+function openViewer(item) {
+  viewing = item;
+  const lab = workLabel(item);
+  const w = Math.min(W - 32, Math.floor((H - 190) * (item.win.ratio || 0.62)));
+  paintWork(viewerCv, item, Math.max(120, w));
+  viewerNoteEl.textContent = "";
+  const jp = document.createElement("div");
+  jp.textContent = `─ ${lab.name} ─ ・ ${lab.pieces}枚`;
+  const when = document.createElement("div");
+  when.textContent = lab.when;
+  viewerNoteEl.appendChild(jp);
+  viewerNoteEl.appendChild(when);
+  viewerEl.hidden = false;
+}
+
+document.getElementById("viewer-close").addEventListener("click", () => {
+  viewerEl.hidden = true;
+  viewing = null;
+});
+document.getElementById("viewer-drop").addEventListener("click", () => {
+  if (!viewing) return;
+  shelf = shelf.filter(it => it !== viewing);
+  saveShelf();
+  viewerEl.hidden = true;
+  viewing = null;
+  buildWorks();
+});
+
 document.getElementById("shelf-open").addEventListener("click", () => {
   buildShelf();
+  buildWorks();
   shelfEl.hidden = false;
 });
 document.getElementById("shelf-close").addEventListener("click", () => {
@@ -1548,6 +1795,10 @@ window.__app = {
   /* 硝子棚のようす */
   cleared: () => cleared,
   frame: () => frameKey,
+  shelf: () => shelf.map(it => ({ at: it.at, diff: it.win.diff,
+                                  cells: it.win.cells.length })),
+  shelfKey: SHELF_KEY,
+  shelfMax: SHELF_MAX,
   sweeping: () => lightSweep !== null,
   asking: () => !document.getElementById("ask").hidden,
   /* 音を鳴らさずに全部埋める(完成時の見た目だけ確かめたい時) */

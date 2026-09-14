@@ -926,6 +926,85 @@ test('色は20系統、それぞれ4つの濃淡を持つ', () => {
   }
 });
 
+/* ---------- 飾り棚 ---------- */
+
+const doneWindow = (tint) => ({
+  diff: 'normal', ratio: 0.62, shape: 'gothic', handmade: null, familyIdx: 6,
+  completed: true,
+  cells: [C.rectCell(0, 0, 1, 0.5), C.rectCell(0, 0.5, 1, 1)],
+  fills: [tint || '#1440c8', '#c1123a'],
+});
+
+test('飾り棚は、上限を超えたらいちばん古い窓と入れ替える', () => {
+  let list = [];
+  const dropped = [];
+  for (let i = 1; i <= C.SHELF_MAX + 5; i++) {
+    const r = C.addToShelf(list, C.packShelf(doneWindow(), i * 1000));
+    list = r.list;
+    if (r.dropped) dropped.push(r.dropped.at);
+  }
+  assert.strictEqual(list.length, C.SHELF_MAX, '上限を超えて溜まっている');
+  assert.deepStrictEqual(dropped, [1000, 2000, 3000, 4000, 5000],
+    '押し出されたのが「いちばん古い順」でない');
+  /* 残っているのは新しい5枚ぶんずれた並び */
+  assert.strictEqual(list[0].at, 6000);
+  assert.strictEqual(list[list.length - 1].at, (C.SHELF_MAX + 5) * 1000);
+});
+
+test('飾り棚は、古い順に並んでいる', () => {
+  let list = [];
+  for (const at of [5000, 1000, 9000, 3000]) {
+    list = C.addToShelf(list, C.packShelf(doneWindow(), at)).list;
+  }
+  assert.deepStrictEqual(list.map(x => x.at), [1000, 3000, 5000, 9000]);
+});
+
+test('飾り棚は、壊れたものが混ざっても落ちない', () => {
+  assert.deepStrictEqual(C.unpackShelf(null), []);
+  assert.deepStrictEqual(C.unpackShelf('こわれている'), []);
+  assert.deepStrictEqual(C.unpackShelf([null, 'x', { at: 1 }, { at: 2, win: {} }]), []);
+  /* まともな1枚だけ拾う */
+  const ok = C.packShelf(doneWindow(), 1000);
+  assert.strictEqual(C.unpackShelf([null, ok, { at: 'あ' }]).length, 1);
+});
+
+test('飾り棚にしまうのは、仕上がった窓だけ', () => {
+  const half = { ...doneWindow(), completed: false, fills: ['#1440c8', null] };
+  assert.strictEqual(C.unpackShelf([C.packShelf(half, 1000)]).length, 0);
+});
+
+test('飾り棚は、上限を超えて読み込まない', () => {
+  const many = [];
+  for (let i = 1; i <= C.SHELF_MAX + 7; i++) many.push(C.packShelf(doneWindow(), i * 1000));
+  const back = C.unpackShelf(many);
+  assert.strictEqual(back.length, C.SHELF_MAX);
+  assert.strictEqual(back[back.length - 1].at, (C.SHELF_MAX + 7) * 1000, '新しいほうを残していない');
+});
+
+test('しまった窓は、元をいじっても変わらない', () => {
+  /* 仕上げたあとに色を差し替えても、飾った窓は当時のまま */
+  const win = doneWindow();
+  const snap = C.unpackWindow(C.packWindow(win));
+  win.fills[0] = '#ffffff';
+  win.cells[0][0][0] = 0.9;
+  assert.strictEqual(snap.fills[0], '#1440c8');
+  assert.strictEqual(snap.cells[0][0][0], 0);
+});
+
+test('20枚しまっても、入れ物に無理のない大きさ', () => {
+  /* localStorage の目安は 5MB。いちばん重い窓を上限まで並べても収まるか */
+  const shape = C.WINDOW_SHAPES.find(s => s.key === 'round');
+  const PW = 333, PH = PW / shape.ratio;
+  const cells = C.makeWindow({ diff: 'vhard', shapePoly: shape.poly(), symmetric: false,
+    panelW: PW, panelH: PH, border: true, curve: true, curveChance: 1, curveBow: 0.16 });
+  const one = C.packShelf({ diff: 'vhard', ratio: shape.ratio, shape: shape.key,
+    handmade: null, familyIdx: 6, completed: true,
+    cells, fills: cells.map(() => '#1440c8') }, Date.now());
+  const bytes = JSON.stringify(new Array(C.SHELF_MAX).fill(one)).length;
+  assert.ok(bytes < 2 * 1024 * 1024,
+    `${C.SHELF_MAX}枚で ${(bytes / 1024 / 1024).toFixed(2)}MB は大きすぎる`);
+});
+
 /* ---------- 言葉づかい ---------- */
 
 test('窓と枠には、和名(銘)と欧文の両方がある', () => {
