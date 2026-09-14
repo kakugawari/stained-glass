@@ -349,6 +349,51 @@
   }
 
   /* ============================================================
+     飾り棚 — 仕上げた窓をとっておく
+     ------------------------------------------------------------
+     入れ物は localStorage なので無制限にはできない。上限を決めて、
+     いっぱいになったらいちばん古い物と入れ替える (黙って消さず、
+     何と入れ替えたかを呼び手に返して、画面で知らせる)。
+     1枚の重さは実測で veasy 4KB 〜 vhard 24KB。20枚でも最大 0.5MB で、
+     localStorage の目安 5MB に対して十分おさまる。
+     ============================================================ */
+  const SHELF_MAX = 20;
+
+  /** 仕上げた窓を1つ、しまえる形にする */
+  function packShelf(win, at) {
+    return { at: Math.round(at), win: packWindow(win) };
+  }
+
+  /** しまってあるものを取り出す。1つでも壊れていたら、それだけ落とす */
+  function unpackShelf(data) {
+    if (!Array.isArray(data)) return [];
+    const out = [];
+    for (const item of data) {
+      if (!item || typeof item !== "object") continue;
+      if (!Number.isFinite(item.at)) continue;
+      const win = unpackWindow(item.win);
+      if (!win) continue;
+      /* 飾るのは仕上がった窓だけ */
+      if (!win.completed) continue;
+      out.push({ at: item.at, win });
+    }
+    /* 古い順に並べておく。上限を超えていたら、新しいほうから残す */
+    out.sort((a, b) => a.at - b.at);
+    return out.length > SHELF_MAX ? out.slice(out.length - SHELF_MAX) : out;
+  }
+
+  /**
+   * 棚に1枚足す。いっぱいなら、いちばん古い物と入れ替える。
+   * @returns {{list: Array, dropped: Object|null}} dropped は押し出された物
+   */
+  function addToShelf(list, item) {
+    const next = [...list, item].sort((a, b) => a.at - b.at);
+    let dropped = null;
+    while (next.length > SHELF_MAX) dropped = next.shift();
+    return { list: next, dropped };
+  }
+
+  /* ============================================================
      押せないかけらを、隣の押せるセルに預ける
      ------------------------------------------------------------
      割る側は最小サイズを守っているが、そのあと窓の外形で切り抜くと、
@@ -1561,5 +1606,6 @@
     CURVE_STYLES, pickCurveStyle, mirrorSymmetric,
     TAP_MIN_PX, attachSlivers,
     SAVE_VERSION, packWindow, unpackWindow,
+    SHELF_MAX, packShelf, unpackShelf, addToShelf,
   };
 });

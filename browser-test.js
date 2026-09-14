@@ -577,6 +577,114 @@ async function run() {
     ok(await phone.evaluate(() => window.__app.cleared()) === grew.cleared,
       '開き直しても、同じ窓を二重に数えない');
 
+    // ------------------------------------------------ 飾り棚
+    // 仕上げた窓が棚に飾られ、大きく見られて、捨てられるか
+    await phone.evaluate(() => {
+      localStorage.removeItem(window.__app.shelfKey);
+      localStorage.removeItem('stained-glass:progress');
+    });
+    await phone.reload();
+    await phone.waitForFunction(() => window.__app);
+    ok(await phone.evaluate(() => window.__app.shelf().length) === 0, '棚は空から始まる');
+
+    const fill = async (diff) => phone.evaluate(async (d) => {
+      window.__app.newWindow(d);
+      const s = window.__app.state();
+      for (let i = 0; i < s.cells.length; i++) {
+        if (s.hosts[i] !== i) continue;
+        const c = window.__app.cellCenter(i);
+        window.__app.tapCell(c.x, c.y);
+      }
+      await new Promise((r) => setTimeout(r, 20));
+      return window.__app.shelf().length;
+    }, diff);
+
+    await start(phone, 'veasy');
+    const after1 = await fill('veasy');
+    ok(after1 === 1, `窓を仕上げると棚に飾られる (${after1} 枚)`);
+    const firstWork = await phone.evaluate(() => window.__app.shelf()[0]);
+    ok(firstWork.cells > 0 && firstWork.diff === 'veasy',
+      `飾った窓の中身が残っている (${firstWork.diff} / ${firstWork.cells} 枚)`);
+
+    // 仕上げたあとに色を差し替えても、飾った窓は当時のまま
+    const frozen = await phone.evaluate(async () => {
+      const before = JSON.stringify(window.__app.shelf()[0]);
+      const c = window.__app.cellCenter(0);
+      window.__app.tapCell(c.x, c.y);          /* 完成後に押すと色味が替わる */
+      await new Promise((r) => setTimeout(r, 30));
+      return before === JSON.stringify(window.__app.shelf()[0]);
+    });
+    ok(frozen, '仕上げたあとに色を替えても、飾った窓は変わらない');
+
+    // 開き直しても残っている
+    await phone.reload();
+    await phone.waitForFunction(() => window.__app);
+    ok(await phone.evaluate(() => window.__app.shelf().length) === 1,
+      '開き直しても飾った窓は残っている');
+
+    // 棚を開くと並んでいる。押すと大きく見られる
+    await phone.locator('#shelf-open').tap();
+    await phone.waitForTimeout(250);
+    ok(await phone.evaluate(() => document.querySelectorAll('.work').length) === 1,
+      '棚に飾った窓が並ぶ');
+    ok(/1 \/ 20/.test(await phone.textContent('#shelf-works-head')),
+      `何枚 / 上限何枚 が出ている (${(await phone.textContent('#shelf-works-head')).trim()})`);
+    await phone.locator('.work').first().tap();
+    await phone.waitForTimeout(250);
+    const viewer = await phone.evaluate(() => {
+      const v = document.getElementById('viewer');
+      const cv = document.getElementById('viewer-cv');
+      return { shown: !v.hidden, w: cv.getBoundingClientRect().width,
+               note: document.getElementById('viewer-note').textContent };
+    });
+    ok(viewer.shown && viewer.w > 100, `押すと大きく見られる (${Math.round(viewer.w)}px)`);
+    ok(/枚/.test(viewer.note) && /年/.test(viewer.note),
+      `銘と枚数と日付が出る (${viewer.note.replace(/\s+/g, ' ').trim()})`);
+
+    // 捨てられる
+    await phone.locator('#viewer-drop').tap();
+    await phone.waitForTimeout(200);
+    ok(await phone.evaluate(() => window.__app.shelf().length) === 0 &&
+       await phone.evaluate(() => document.getElementById('viewer').hidden),
+      '捨てると棚から消える');
+    await phone.reload();
+    await phone.waitForFunction(() => window.__app);
+    ok(await phone.evaluate(() => window.__app.shelf().length) === 0,
+      '捨てたものは、開き直しても戻ってこない');
+
+    // 上限まで溜まったら、いちばん古いものと入れ替わる
+    const cap = await phone.evaluate(async () => {
+      const max = window.__app.shelfMax;
+      const list = [];
+      for (let i = 0; i < max + 3; i++) {
+        list.push({ at: 1000 + i * 1000, win: JSON.parse(JSON.stringify(
+          window.Core.packWindow({
+            diff: 'veasy', ratio: 0.62, shape: 'gothic', handmade: null, familyIdx: 6,
+            completed: true,
+            cells: [window.Core.rectCell(0, 0, 1, 0.5), window.Core.rectCell(0, 0.5, 1, 1)],
+            fills: ['#1440c8', '#c1123a'],
+          }))) });
+      }
+      localStorage.setItem(window.__app.shelfKey, JSON.stringify(list));
+      return max;
+    });
+    await phone.reload();
+    await phone.waitForFunction(() => window.__app);
+    const capped = await phone.evaluate(() => window.__app.shelf());
+    ok(capped.length === cap && capped[0].at === 4000,
+      `上限 ${cap} 枚を超えたぶんは、古いほうから落ちる (先頭 ${capped[0].at})`);
+
+    // 棚の記録が壊れていても落ちない
+    await phone.evaluate(() => localStorage.setItem(window.__app.shelfKey, '{こわれている'));
+    await phone.reload();
+    await phone.waitForFunction(() => window.__app);
+    ok(await phone.evaluate(() => window.__app.shelf().length) === 0 &&
+       await phone.evaluate(() => window.__app.screen()) === 'title',
+      '飾り棚の記録が壊れていても、普通に開ける');
+    await phone.evaluate(() => localStorage.removeItem(window.__app.shelfKey));
+    await phone.reload();
+    await phone.waitForFunction(() => window.__app);
+
     // 木枠は、手に入れた物だけ選べる
     await phone.evaluate(() => {
       localStorage.setItem('stained-glass:progress',
