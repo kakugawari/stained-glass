@@ -343,7 +343,7 @@
   <img id="start-icon" src="./icon-512.png" alt="ステンドグラス">
   <div id="start-sub">硝子を嵌めて、窓に光を灯す</div>
   <div id="start-tools">
-    <button id="theme-toggle" class="btn">暗い部屋にする</button>
+    <button id="theme-toggle" class="btn">白い壁にする</button>
     <button id="shelf-open" class="btn">硝子棚</button>
   </div>
   <div id="start-menu">
@@ -497,9 +497,10 @@ const THEMES = {
 };
 
 const THEME_KEY = "stained-glass:theme";
-let theme = THEMES.day;
+/* 既定は暗い部屋。硝子の色がいちばん映える */
+let theme = THEMES.night;
 try {
-  if (localStorage.getItem(THEME_KEY) === "night") theme = THEMES.night;
+  if (localStorage.getItem(THEME_KEY) === "day") theme = THEMES.day;
 } catch (e) { /* シークレットウィンドウなど。既定のままでよい */ }
 
 /* 画面(DOM)側の色を流し込む */
