@@ -257,6 +257,33 @@ async function run() {
     ok(flick.sweeping, '窓の外から速くはらうと、光の帯が走る');
     ok(flick.added === 0, 'そのはらいでは硝子が 1 枚も嵌まらない');
 
+    // ------------------------------------------------ 壁の色
+    section('壁の色');
+    await phone.locator('#to-title').tap();
+    await phone.waitForTimeout(150);
+    const wallOf = () => phone.evaluate(() => {
+      const cv = document.getElementById('cv');
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const d = cv.getContext('2d').getImageData(4, 4, 1, 1).data;
+      return [d[0], d[1], d[2]];
+    });
+    ok(await phone.evaluate(() => window.__app.theme()) === 'day', '最初は白い壁');
+    const dayWall = await wallOf();
+    await phone.locator('#theme-toggle').tap();
+    await phone.waitForTimeout(200);
+    const nightWall = await wallOf();
+    ok(await phone.evaluate(() => window.__app.theme()) === 'night' &&
+       nightWall[0] + nightWall[1] + nightWall[2] < dayWall[0] + dayWall[1] + dayWall[2] - 200,
+      `押すと暗い部屋になる (rgb(${dayWall}) → rgb(${nightWall}))`);
+    await phone.reload();
+    await phone.waitForFunction(() => window.__app);
+    ok(await phone.evaluate(() => window.__app.theme()) === 'night', '選んだ壁は覚えている');
+    await phone.locator('#theme-toggle').tap();
+    await phone.waitForTimeout(200);
+    ok(await phone.evaluate(() => window.__app.theme()) === 'day', '白い壁に戻せる');
+    await phone.locator('#go-resume').tap();
+    await phone.waitForTimeout(250);
+
     // ------------------------------------------------ 塗りかけが消えない
     section('塗りかけが消えない');
 

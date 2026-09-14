@@ -16,11 +16,20 @@
 <script src="./core.js"></script>
 <style>
   /* ===== 全体:大正の洋館の薄暗がり ===== */
+  :root {
+    --ink: 215,200,170;        /* 文字 */
+    --ink-soft: 215,200,170;
+    --accent: 255,225,160;     /* 選ばれている所 */
+    --panel: 20,16,12;         /* 札の下地 */
+    --bar-fade: 10,8,6;        /* 操作帯のぼかし */
+    --wall: #14110e;           /* 壁 */
+    --start-bg: none;
+  }
   html, body {
     margin: 0; padding: 0;
     width: 100%; height: 100%;
     overflow: hidden;
-    background: #14110e;
+    background: var(--wall);
     touch-action: none;
     -webkit-user-select: none; user-select: none;
     font-family: "Hiragino Mincho ProN", "Yu Mincho", "YuMincho", serif;
@@ -33,9 +42,7 @@
     display: flex; flex-direction: column; align-items: center; justify-content: center;
     gap: 18px;
     padding: 24px 20px calc(24px + env(safe-area-inset-bottom));
-    background:
-      radial-gradient(120% 80% at 50% 32%, rgba(70,52,30,0.55), rgba(12,10,8,0) 70%),
-      linear-gradient(to bottom, #201b15, #14110e 60%, #0c0a08);
+    background: var(--start-bg);
     z-index: 5;
     transition: opacity 0.45s ease;
   }
@@ -45,12 +52,15 @@
   #start-icon {
     width: min(46vw, 190px); height: auto;
     border-radius: 22%;
-    box-shadow: 0 0 44px rgba(255,220,160,0.22), 0 10px 30px rgba(0,0,0,0.5);
+    box-shadow: 0 0 44px rgba(var(--accent),0.22), 0 10px 30px rgba(0,0,0,0.22);
   }
   #start-sub {
-    color: rgba(215,200,170,0.72);
+    color: rgba(var(--ink),0.78);
     font-size: 13px; letter-spacing: 0.28em;
-    text-shadow: 0 0 12px rgba(215,190,140,0.25);
+  }
+  #theme-toggle {
+    font-size: 11px; letter-spacing: 0.12em;
+    padding: 7px 14px; opacity: 0.8;
   }
   #start-menu {
     display: flex; flex-direction: column; gap: 9px;
@@ -60,22 +70,23 @@
     display: flex; align-items: baseline; justify-content: space-between; gap: 10px;
     width: 100%; min-height: 48px;
     padding: 11px 16px;
-    color: rgba(215,200,170,0.9);
-    background: rgba(28,23,18,0.75);
-    border: 1px solid rgba(215,200,170,0.28);
+    color: rgba(var(--ink),0.92);
+    background: rgba(var(--panel),0.72);
+    border: 1px solid rgba(var(--ink),0.3);
     border-radius: 5px;
     font-family: inherit; font-size: 15px; letter-spacing: 0.16em;
     cursor: pointer;
     transition: background 0.15s ease, border-color 0.15s ease;
   }
-  .start-btn:active { background: rgba(215,200,170,0.16); }
+  .start-btn:active { background: rgba(var(--ink),0.16); }
   .start-btn .note {
     font-size: 11px; letter-spacing: 0.1em;
-    color: rgba(215,200,170,0.5);
+    color: rgba(var(--ink-soft),0.62);
   }
   #go-resume {
-    border-color: rgba(255,225,160,0.65);
-    color: rgba(255,233,184,0.95);
+    border-color: rgba(var(--accent),0.75);
+    color: rgba(var(--accent),1);
+    background: rgba(var(--accent),0.10);
   }
   #go-resume[hidden] { display: none; }
 
@@ -84,31 +95,30 @@
     position: fixed; top: calc(8px + env(safe-area-inset-top)); left: 8px;
     width: 40px; height: 40px;
     display: flex; align-items: center; justify-content: center;
-    color: rgba(215,200,170,0.55);
+    color: rgba(var(--ink),0.6);
     background: none; border: none;
     font-size: 20px; line-height: 1;
     cursor: pointer; z-index: 3;
   }
   #to-title[hidden] { display: none; }
-  #to-title:active { color: rgba(255,233,184,0.95); }
+  #to-title:active { color: rgba(var(--accent),1); }
 
   /* ===== 枠の名前(上にふわっと出る) ===== */
   #frame-name {
     position: fixed; top: 14px; left: 50%;
     transform: translateX(-50%);
-    color: rgba(215,200,170,0.85);
+    color: rgba(var(--ink),0.88);
     font-size: 13px; letter-spacing: 0.3em;
     pointer-events: none;
     opacity: 0;
     transition: opacity 0.8s ease;
-    text-shadow: 0 0 10px rgba(215,190,140,0.3);
   }
   #frame-name.show { opacity: 1; }
 
   /* ===== のこり枚数(右上に控えめに) ===== */
   #remain {
     position: fixed; top: 18px; right: 16px;
-    color: rgba(215,200,170,0.5);
+    color: rgba(var(--ink-soft),0.7);
     font-size: 12px; letter-spacing: 0.2em;
     pointer-events: none;
     transition: opacity 0.6s ease;
@@ -121,7 +131,7 @@
     display: flex; flex-direction: column; align-items: center;
     gap: 9px;
     padding: 10px 8px calc(10px + env(safe-area-inset-bottom));
-    background: linear-gradient(to top, rgba(10,8,6,0.88), rgba(10,8,6,0));
+    background: linear-gradient(to top, rgba(var(--bar-fade),0.92), rgba(var(--bar-fade),0));
   }
   /* ID 指定は [hidden]{display:none} より強い。閉じている時は必ず消す */
   #bar[hidden] { display: none; }
@@ -134,17 +144,17 @@
     justify-content: center;
     max-width: min(92vw, 420px);
     padding: 10px 12px;
-    border: 1px solid rgba(215,200,170,0.22);
+    border: 1px solid rgba(var(--ink),0.24);
     border-radius: 6px;
-    background: rgba(20,16,12,0.92);
-    color: rgba(215,200,170,0.9);
+    background: rgba(var(--panel),0.95);
+    color: rgba(var(--ink),0.92);
     font-size: 12px; letter-spacing: 0.06em;
   }
   /* ID 指定は [hidden]{display:none} より強い。閉じている時は必ず消す
      (消し忘れると、操作帯が窓の下をふさいでセルが押せなくなる) */
   #ask[hidden] { display: none; }
   #ask .btn { font-size: 12px; padding: 6px 12px; }
-  #ask-yes { border-color: rgba(215,190,140,0.55); }
+  #ask-yes { border-color: rgba(var(--accent),0.7); }
 
   #swatches {
     display: flex; gap: 7px; justify-content: center; flex-wrap: nowrap;
@@ -155,7 +165,7 @@
       top: 0; bottom: 0; left: auto; right: 0;
       justify-content: center; gap: 10px;
       padding: 8px calc(8px + env(safe-area-inset-right)) 8px 12px;
-      background: linear-gradient(to left, rgba(10,8,6,0.9), rgba(10,8,6,0));
+      background: linear-gradient(to left, rgba(var(--bar-fade),0.92), rgba(var(--bar-fade),0));
     }
     #swatches { display: grid; grid-template-columns: repeat(2, auto); gap: 6px; }
     #buttons  { display: grid; grid-template-columns: repeat(2, auto); gap: 6px; }
@@ -166,30 +176,30 @@
   }
   .swatch {
     width: 24px; height: 24px; border-radius: 50%;
-    border: 1px solid rgba(255,255,255,0.18);
+    border: 1px solid rgba(var(--ink),0.25);
     cursor: pointer;
     transition: transform 0.15s ease, box-shadow 0.15s ease;
     flex-shrink: 0;
   }
   .swatch.active {
     transform: scale(1.22);
-    box-shadow: 0 0 9px 2px rgba(255,255,255,0.3);
-    border-color: rgba(255,255,255,0.75);
+    box-shadow: 0 0 9px 2px rgba(var(--accent),0.45);
+    border-color: rgba(var(--ink),0.85);
   }
   #buttons { display: flex; gap: 8px; }
   .btn {
-    color: rgba(215,200,170,0.85);
-    background: none; border: 1px solid rgba(215,200,170,0.3);
+    color: rgba(var(--ink),0.9);
+    background: none; border: 1px solid rgba(var(--ink),0.3);
     border-radius: 4px;
     font-family: inherit; font-size: 12px; letter-spacing: 0.08em;
     padding: 6px 10px;
     cursor: pointer;
   }
-  .btn:active { background: rgba(215,200,170,0.12); }
+  .btn:active { background: rgba(var(--ink),0.12); }
   .btn.active {
-    color: #ffe9b8;
-    border-color: rgba(255,225,160,0.7);
-    box-shadow: 0 0 8px rgba(255,220,150,0.2);
+    color: rgba(var(--accent),1);
+    border-color: rgba(var(--accent),0.7);
+    box-shadow: 0 0 8px rgba(var(--accent),0.22);
   }
 </style>
 </head>
@@ -207,6 +217,7 @@
 <div id="start">
   <img id="start-icon" src="./icon-512.png" alt="ステンドグラス">
   <div id="start-sub">硝子を嵌めて、窓に光を灯す</div>
+  <button id="theme-toggle" class="btn">暗い部屋にする</button>
   <div id="start-menu">
     <button class="start-btn" id="go-resume" hidden>
       <span class="name">つづきから</span><span class="note" id="resume-note"></span>
@@ -260,6 +271,93 @@ const BORDER_CHANCE = 0.7;
 
 /* 塗りかけの窓のしまい場所。開き直したら続きから */
 const SAVE_KEY = "stained-glass:window";
+
+/* ============================================================
+   配色(テーマ)
+   ------------------------------------------------------------
+   暗い部屋と白い壁では、硝子の見え方がまるごと変わる。
+   背景だけ差し替えると、鉛線・空のセル・木枠・文字がちぐはぐになるので、
+   まとめて持っておいて、ひとところで切り替える。
+   ============================================================ */
+const THEMES = {
+  /* 白い壁の部屋(アイコンの雰囲気) */
+  day: {
+    name: "day",
+    themeColor: "#f3ecdd",
+    wall: ["#faf6ec", "#f3ecdd", "#e8dcc6"],
+    wallGlow: "255,236,196",          /* 完成した時に広がる光 */
+    wallGlowAlpha: 0.55,
+    glassAlpha: 1,
+    /* 白い壁では光を足しすぎない。足すと明るい色が白へ振り切れ、
+       乳白の濃淡が消えて「まだ塗っていないセル」とも紛らわしくなる */
+    glowBase: 0.03, glowScale: 0.06,
+    breatheBase: 0.02, breatheAmp: 0.02, completeBreathe: 0.06,
+    lead: "#333f42", leadWidth: 3,    /* 鉛線。アイコンと同じ濃い青灰 */
+    /* 空のセルは、壁より冷たく暗い灰。淡すぎると、乳白の硝子と見分けがつかない */
+    emptyFill: "rgb(163,172,179)",
+    emptyStroke: "rgba(60,70,72,0.3)",
+    /* 枠は灰色の板にすると壁から浮くので、アイコンと同じ濃い色で締める */
+    frame: ["#46545a", "#36434a", "#2a353b"],
+    frameInner: "#f0e9da",
+    frameEdge: "rgba(90,74,52,0.18)",
+    ray: "120,96,48", rayAlpha: 0.10,
+    glint: "255,252,240", glintAlpha: 0.30,
+    sweep: "255,244,214",
+    ink: "58,68,72", inkSoft: "90,100,104",
+    accent: "150,110,40",
+    panel: "252,248,240",
+    barFade: "247,242,232",
+    startBg: "radial-gradient(120% 80% at 50% 30%, rgba(255,246,224,0.95), rgba(243,236,221,0) 70%), linear-gradient(to bottom, #fbf7ee, #f3ecdd 60%, #e9dfcb)",
+  },
+  /* 薄暗い洋館(これまでの色) */
+  night: {
+    name: "night",
+    themeColor: "#14110e",
+    wall: ["#221d17", "#181410", "#0e0b08"],
+    wallGlow: "255,235,190",
+    wallGlowAlpha: 0.10,
+    glassAlpha: 0.95,
+    glowBase: 0.05, glowScale: 0.24,
+    breatheBase: 0.07, breatheAmp: 0.05, completeBreathe: 0.12,
+    lead: "#17130f", leadWidth: 3,
+    emptyFill: "rgba(13,19,32,0.9)",
+    emptyStroke: "rgba(215,200,170,0.28)",
+    frame: ["#4a3626", "#33251a", "#241a12"],
+    frameInner: "#15100b",
+    frameEdge: "rgba(255,220,170,0.10)",
+    ray: "255,240,200", rayAlpha: 0.06,
+    glint: "255,245,220", glintAlpha: 0.35,
+    sweep: "255,245,215",
+    ink: "215,200,170", inkSoft: "215,200,170",
+    accent: "255,225,160",
+    panel: "20,16,12",
+    barFade: "10,8,6",
+    startBg: "radial-gradient(120% 80% at 50% 32%, rgba(70,52,30,0.55), rgba(12,10,8,0) 70%), linear-gradient(to bottom, #201b15, #14110e 60%, #0c0a08)",
+  },
+};
+
+const THEME_KEY = "stained-glass:theme";
+let theme = THEMES.day;
+try {
+  if (localStorage.getItem(THEME_KEY) === "night") theme = THEMES.night;
+} catch (e) { /* シークレットウィンドウなど。既定のままでよい */ }
+
+/* 画面(DOM)側の色を流し込む */
+function applyTheme(t) {
+  theme = t;
+  const toggle = document.getElementById("theme-toggle");
+  if (toggle) toggle.textContent = t.name === "day" ? "暗い部屋にする" : "白い壁にする";
+  const root = document.documentElement.style;
+  root.setProperty("--ink", t.ink);
+  root.setProperty("--ink-soft", t.inkSoft);
+  root.setProperty("--accent", t.accent);
+  root.setProperty("--panel", t.panel);
+  root.setProperty("--bar-fade", t.barFade);
+  root.setProperty("--wall", t.wall[1]);
+  root.setProperty("--start-bg", t.startBg);
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if (meta) meta.setAttribute("content", t.themeColor);
+}
 
 const cv  = document.getElementById("cv");
 const ctx = cv.getContext("2d");
@@ -610,7 +708,7 @@ function redrawGlass() {
     cellPath(glassCtx, poly);
     if (fills[i]) {
       glassCtx.fillStyle = fills[i];
-      glassCtx.globalAlpha = 0.95;
+      glassCtx.globalAlpha = theme.glassAlpha;
       glassCtx.fill();
       const mid = insidePoint(poly);
       const cx = ux(mid[0]), cy = vy(mid[1]);
@@ -618,22 +716,22 @@ function redrawGlass() {
       /* 光の差し込み。暗い硝子ほど控えめにする。
          どの色にも同じだけ白を足すと、深い藍も深い臙脂も中間色になり、
          同じ系統の濃淡も見分けがつかなくなる */
-      const glow = 0.05 + 0.24 * relLuminance(fills[i]);
+      const glow = theme.glowBase + theme.glowScale * relLuminance(fills[i]);
       const g = glassCtx.createRadialGradient(cx, cy, 0, cx, cy, rad);
       g.addColorStop(0, `rgba(255,255,255,${glow})`);
       g.addColorStop(1, "rgba(255,255,255,0)");
       glassCtx.fillStyle = g;
       glassCtx.fill();
       glassCtx.globalAlpha = 1;
-      glassCtx.strokeStyle = "#17130f";
-      glassCtx.lineWidth = 3;
+      glassCtx.strokeStyle = theme.lead;
+      glassCtx.lineWidth = theme.leadWidth;
       glassCtx.lineJoin = "round";
       glassCtx.stroke();
     } else {
-      glassCtx.fillStyle = "rgba(13,19,32,0.9)";
+      glassCtx.fillStyle = theme.emptyFill;
       glassCtx.globalAlpha = 1;
       glassCtx.fill();
-      glassCtx.strokeStyle = "rgba(215,200,170,0.28)";
+      glassCtx.strokeStyle = theme.emptyStroke;
       glassCtx.lineWidth = 1.2;
       glassCtx.lineJoin = "round";
       glassCtx.stroke();
@@ -898,16 +996,16 @@ function updateGlints(dt) {
    ============================================================ */
 function drawBackground() {
   const g = ctx.createLinearGradient(0, 0, 0, H);
-  g.addColorStop(0, "#221d17");
-  g.addColorStop(0.55, "#181410");
-  g.addColorStop(1, "#0e0b08");
+  g.addColorStop(0, theme.wall[0]);
+  g.addColorStop(0.55, theme.wall[1]);
+  g.addColorStop(1, theme.wall[2]);
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, W, H);
 
   if (completeGlow > 0) {
     const gg = ctx.createRadialGradient(W / 2, PY + PH / 2, 0, W / 2, PY + PH / 2, Math.max(W, H));
-    gg.addColorStop(0, `rgba(255,235,190,${0.10 * completeGlow})`);
-    gg.addColorStop(1, "rgba(255,235,190,0)");
+    gg.addColorStop(0, `rgba(${theme.wallGlow},${theme.wallGlowAlpha * completeGlow})`);
+    gg.addColorStop(1, `rgba(${theme.wallGlow},0)`);
     ctx.fillStyle = gg;
     ctx.fillRect(0, 0, W, H);
   }
@@ -920,18 +1018,18 @@ function drawWoodFrame() {
   ctx.beginPath();
   shapePath(ctx);
   const wg = ctx.createLinearGradient(PX, PY, PX + PW, PY + PH);
-  wg.addColorStop(0, "#4a3626");
-  wg.addColorStop(0.5, "#33251a");
-  wg.addColorStop(1, "#241a12");
+  wg.addColorStop(0, theme.frame[0]);
+  wg.addColorStop(0.5, theme.frame[1]);
+  wg.addColorStop(1, theme.frame[2]);
   ctx.strokeStyle = wg;
   ctx.lineWidth = b * 2;
   ctx.lineJoin = "round";
   ctx.stroke();
   /* 内側の細い縁と、外側のわずかなハイライト */
-  ctx.strokeStyle = "#15100b";
+  ctx.strokeStyle = theme.frameInner;
   ctx.lineWidth = 2.5;
   ctx.stroke();
-  ctx.strokeStyle = "rgba(255,220,170,0.10)";
+  ctx.strokeStyle = theme.frameEdge;
   ctx.lineWidth = b * 2 + 2;
   ctx.stroke();
   ctx.restore();
@@ -953,8 +1051,8 @@ function drawCompleteRays(time) {
     const len = Math.max(W, H) * 1.2;
     const x2 = cx + Math.cos(a) * len, y2 = cy + Math.sin(a) * len;
     const lg = ctx.createLinearGradient(cx, cy, x2, y2);
-    lg.addColorStop(0, `rgba(255,240,200,${0.06 * completeGlow})`);
-    lg.addColorStop(1, "rgba(255,240,200,0)");
+    lg.addColorStop(0, `rgba(${theme.ray},${theme.rayAlpha * completeGlow})`);
+    lg.addColorStop(1, `rgba(${theme.ray},0)`);
     ctx.strokeStyle = lg;
     ctx.lineWidth = PW * (0.10 + (i % 3) * 0.05);
     ctx.beginPath();
@@ -983,8 +1081,9 @@ function frame(now) {
   /* 硝子本体+呼吸する裏光 */
   ctx.drawImage(glassCv, 0, 0, W, H);
   /* 裏から射す光の呼吸。強くしすぎると明るい硝子が振り切れて白く濁る */
-  const breathe = (reduceMotion ? 0.07 : 0.07 + 0.05 * Math.sin(time * 0.9))
-                + completeGlow * 0.12;
+  const breathe = (reduceMotion ? theme.breatheBase
+                                : theme.breatheBase + theme.breatheAmp * Math.sin(time * 0.9))
+                + completeGlow * theme.completeBreathe;
   ctx.save();
   ctx.globalCompositeOperation = "lighter";
   ctx.globalAlpha = Math.max(0, breathe);
@@ -998,9 +1097,9 @@ function frame(now) {
     for (const g of glints) {
       if (!cells[g.idx] || !fills[g.idx]) continue;
       const a = Math.sin(g.t / g.dur * Math.PI);
-      ctx.globalAlpha = a * 0.35;
+      ctx.globalAlpha = a * theme.glintAlpha;
       cellPath(ctx, cells[g.idx]);
-      ctx.fillStyle = "#fff5dc";
+      ctx.fillStyle = `rgb(${theme.glint})`;
       ctx.fill();
     }
     ctx.restore();
@@ -1022,9 +1121,9 @@ function frame(now) {
         cx + d.dx * PW, cy + d.dy * PW
       );
       const a = Math.sin(p * Math.PI) * 0.22;
-      lg.addColorStop(0,   "rgba(255,245,215,0)");
-      lg.addColorStop(0.5, `rgba(255,245,215,${a})`);
-      lg.addColorStop(1,   "rgba(255,245,215,0)");
+      lg.addColorStop(0,   `rgba(${theme.sweep},0)`);
+      lg.addColorStop(0.5, `rgba(${theme.sweep},${a})`);
+      lg.addColorStop(1,   `rgba(${theme.sweep},0)`);
       ctx.save();
       ctx.globalCompositeOperation = "lighter";
       ctx.beginPath();
@@ -1046,6 +1145,15 @@ function frame(now) {
    起動:タイトル画面から。前の窓は読み込んでおき、
    塗りかけなら「つづきから」を出す
    ============================================================ */
+applyTheme(theme);
+
+/* 壁の色を切り替える(タイトル画面) */
+document.getElementById("theme-toggle").addEventListener("click", () => {
+  applyTheme(theme.name === "day" ? THEMES.night : THEMES.day);
+  try { localStorage.setItem(THEME_KEY, theme.name); } catch (e) { /* 保存できなくても遊べる */ }
+  redrawGlass();
+});
+
 resize();
 restoreSaved();
 showTitle();
@@ -1071,6 +1179,7 @@ window.__app = {
   newWindow,
   /* いまどちらの画面か / 画面を移る(テストから) */
   screen: () => (atTitle ? "title" : "play"),
+  theme: () => theme.name,
   showTitle: () => showTitle(),
   enterPlay: () => enterPlay(),
   /* 見比べ用: 決まった枠をそのまま出す */
