@@ -121,28 +121,69 @@
     return inside;
   }
 
-  /* セルの中にある点を1つ返す。
+  /* 点から辺までのいちばん近い距離 */
+  function distToEdges(x, y, poly) {
+    let best = Infinity;
+    for (let i = 0; i < poly.length; i++) {
+      const a = poly[i], b = poly[(i + 1) % poly.length];
+      const dx = b[0] - a[0], dy = b[1] - a[1];
+      const len2 = dx * dx + dy * dy;
+      let t = len2 > 0 ? ((x - a[0]) * dx + (y - a[1]) * dy) / len2 : 0;
+      t = Math.max(0, Math.min(1, t));
+      best = Math.min(best, Math.hypot(x - (a[0] + dx * t), y - (a[1] + dy * t)));
+    }
+    return best;
+  }
+
+  /* セルの中にある点を1つ返す。指で押す目当てであり、光の差し込みの中心。
      頂点の平均はふつう中に入るが、扇形の輪のように凹んだセルでは外へ出る
      (実測 22689枚中16枚、Wheel Window の輪)。外に出ると、光の差し込みが
-     よそに描かれ、テストで「その一枚を押す」こともできなくなる */
+     よそに描かれ、テストで「その一枚を押す」こともできなくなる。
+     さらに、中に入っていても ふちすれすれの点だと、そこを狙って押した指が
+     1px の丸めで隣のセルへ逃げる (実測 11270枚中 144枚が 1px 未満)。
+     そこで候補をいくつも出し、辺からの距離がいちばん大きい点を採る。
+     安くはないので、呼ぶ側はセルごとに覚えて使い回すこと */
   function insidePoint(poly) {
     let ax = 0, ay = 0;
     for (const p of poly) { ax += p[0]; ay += p[1]; }
     ax /= poly.length; ay /= poly.length;
-    if (pointInPoly(ax, ay, poly)) return [ax, ay];
 
-    /* 三角形に切り分けて、中に入るものを探す */
+    let best = null, bestD = -1;
+    const tryPoint = (x, y) => {
+      if (!pointInPoly(x, y, poly)) return;
+      const d = distToEdges(x, y, poly);
+      if (d > bestD) { bestD = d; best = [x, y]; }
+    };
+    tryPoint(ax, ay);
+    /* 三角形に切り分けた重心 */
     for (let i = 1; i < poly.length - 1; i++) {
-      const x = (poly[0][0] + poly[i][0] + poly[i + 1][0]) / 3;
-      const y = (poly[0][1] + poly[i][1] + poly[i + 1][1]) / 3;
-      if (pointInPoly(x, y, poly)) return [x, y];
+      tryPoint((poly[0][0] + poly[i][0] + poly[i + 1][0]) / 3,
+               (poly[0][1] + poly[i][1] + poly[i + 1][1]) / 3);
     }
     for (let i = 0; i < poly.length; i++) {
       const a = poly[i], b = poly[(i + 1) % poly.length], c = poly[(i + 2) % poly.length];
-      const x = (a[0] + b[0] + c[0]) / 3, y = (a[1] + b[1] + c[1]) / 3;
-      if (pointInPoly(x, y, poly)) return [x, y];
+      tryPoint((a[0] + b[0] + c[0]) / 3, (a[1] + b[1] + c[1]) / 3);
     }
-    return [ax, ay];
+    /* 全体の重心と各頂点のあいだも試す(細長い形で効く) */
+    for (const p of poly) {
+      tryPoint((ax * 2 + p[0]) / 3, (ay * 2 + p[1]) / 3);
+      tryPoint((ax + p[0]) / 2, (ay + p[1]) / 2);
+    }
+    if (!best) return [ax, ay];
+
+    /* いちばん良かった点のまわりを、歩幅を半分にしながら探る。
+       辺から離れるほど、そこを狙った指が隣のセルへ逃げにくい */
+    const xs = poly.map(p => p[0]), ys = poly.map(p => p[1]);
+    let step = Math.max(Math.max(...xs) - Math.min(...xs),
+                        Math.max(...ys) - Math.min(...ys)) / 4;
+    for (let round = 0; round < 6; round++, step /= 2) {
+      const [bx, by] = best;
+      for (let k = 0; k < 8; k++) {
+        const a = k * Math.PI / 4;
+        tryPoint(bx + Math.cos(a) * step, by + Math.sin(a) * step);
+      }
+    }
+    return best;
   }
 
   /* 同じ場所に並んだ点を落とす。
@@ -172,7 +213,10 @@
      壊れた中身を読み込んでも落ちないよう、取り出す側で必ず検める
      (別の版で保存したもの・途中で切れたもの・人が書き換えたもの)。
      ============================================================ */
-  const SAVE_VERSION = 1;
+  const SAVE_VERSION = 2;
+  /* v1 の頃は easy が 10枚だった。段を足した時に 10枚は veasy へ移したので、
+     古い塗りかけを読む時だけ読み替える (塗りかけは消さない) */
+  const DIFF_ALIAS_V1 = { easy: "veasy" };
 
   const round5 = (n) => Math.round(n * 1e5) / 1e5;   /* 小数を切って軽くする */
 
@@ -193,10 +237,11 @@
 
   /** 保存した形から窓を取り出す。少しでもおかしければ null */
   function unpackWindow(data) {
-    if (!data || data.v !== SAVE_VERSION) return null;
+    if (!data || (data.v !== SAVE_VERSION && data.v !== 1)) return null;
     if (!Array.isArray(data.cells) || !Array.isArray(data.fills)) return null;
     if (data.cells.length === 0 || data.cells.length !== data.fills.length) return null;
-    if (!DIFF_TARGET[data.diff]) return null;
+    const diff = (data.v === 1 && DIFF_ALIAS_V1[data.diff]) || data.diff;
+    if (!DIFF_TARGET[diff]) return null;
     if (!(typeof data.ratio === 'number' && data.ratio > 0 && data.ratio < 10)) return null;
     if (data.shape !== null && data.shape !== undefined &&
         !WINDOW_SHAPES.some(s => s.key === data.shape)) return null;
@@ -217,7 +262,7 @@
       data.familyIdx >= 0 && data.familyIdx < COLOR_FAMILIES.length ? data.familyIdx : 0;
 
     return {
-      diff: data.diff,
+      diff,
       ratio: data.ratio,
       shape: data.shape || null,
       handmade: data.handmade || null,
@@ -268,7 +313,13 @@
       const xs = cells[i].map(p => p[0]), ys = cells[i].map(p => p[1]);
       const w = (Math.max(...xs) - Math.min(...xs)) * panelW;
       const h = (Math.max(...ys) - Math.min(...ys)) * panelH;
-      if (Math.min(w, h) >= minPx) { host[i] = i; tappable.push(i); }
+      if (Math.min(w, h) < minPx) continue;
+      /* 外枠の大きさだけでは足りない。三日月のような形は、外枠が大きくても
+         どこも細い。指の腹ぶんの円が入るかどうかで見る */
+      const mid = insidePoint(cells[i]);
+      if (distToEdges(mid[0] * panelW, mid[1] * panelH,
+                      cells[i].map(p => [p[0] * panelW, p[1] * panelH])) < minPx / 4) continue;
+      host[i] = i; tappable.push(i);
     }
     /* 押せるセルが 1 枚も無い(ありえないほど小さい画面)なら、そのまま返す */
     if (tappable.length === 0) return cells.map((_, i) => i);
@@ -284,6 +335,14 @@
       host[i] = best;
     }
     return host;
+  }
+
+  /* 実際に指で押す枚数。預けたかけらは持ち主と一緒に嵌まるので数えない */
+  function tappableCount(cells, panelW, panelH) {
+    const host = attachSlivers(cells, panelW, panelH);
+    let n = 0;
+    for (let i = 0; i < cells.length; i++) if (host[i] === i) n++;
+    return n;
   }
 
   /* ============================================================
@@ -624,8 +683,41 @@
      ============================================================ */
   const FIT_PANEL = { w: 255, h: 411 };   /* ふつうのスマホでの窓の大きさ(px) */
 
-  /* 目標からどこまで離れてよいか。easy は枚数が少ないので、幅も少し持たせる */
-  const fitSlack = (target) => Math.max(4, target * 0.35);
+  /* 目標からどこまで離れてよいか。どの段でも同じ割合(±35%)。
+     枚数の少ない段だけ広くなると、いちばん差の目立つ所で手応えがそろわない */
+  const fitSlack = (target) => Math.max(3, target * 0.35);
+
+  /* 出来上がった窓が、その段の帯に収まっているか(押す枚数で見る) */
+  function inTargetBand(taps, diffKey) {
+    const target = DIFF_TARGET[diffKey];
+    return Math.abs(taps - target) <= fitSlack(target);
+  }
+
+  /* ------------------------------------------------------------
+     帯に収まるまで引き直す
+     ------------------------------------------------------------
+     fitsDifficulty は手作り枠にしかかかっていなかったので、ランダム枠は
+     帯の外へ出られた (目標10 に対して 18枚の窓が出ていた)。
+     「同じ難易度なら、同じ手応え」を守るのは出来上がりの側なので、
+     切り抜きとかけら預けまで済ませた枚数で見て、外れていたら引き直す。
+     build() は窓ぶんの状態を作って返す関数。cells を持つ物なら何でもよい。
+     どうしても収まらない時は、いちばん目標に近かった窓を返す
+     (窓が出ないよりはよい)。
+     ------------------------------------------------------------ */
+  function buildInBand(diffKey, panelW, panelH, build, tries = 8) {
+    const target = DIFF_TARGET[diffKey];
+    let best = null, bestGap = Infinity;
+    for (let t = 0; t < tries; t++) {
+      const made = build();
+      /* 外形によって窓の大きさが変わるので、その窓自身の大きさで数える */
+      const w = made.panelW || panelW, h = made.panelH || panelH;
+      const taps = tappableCount(made.cells, w, h);
+      if (inTargetBand(taps, diffKey)) return made;
+      const gap = Math.abs(taps - target);
+      if (gap < bestGap) { bestGap = gap; best = made; }
+    }
+    return best;
+  }
 
   function fitsDifficulty(frame, diffKey) {
     const target = DIFF_TARGET[diffKey];
@@ -641,8 +733,10 @@
   }
 
   const HANDMADE_BY_DIFF = {
-    easy:   ["Checker", "Grand Diamond", "Three Diamonds", "Sunburst", "Columns",
-             "Brickwork", "Door Panel", "Diamond Lattice", "Chevron"],
+    veasy:  ["Checker", "Grand Diamond", "Three Diamonds", "Sunburst", "Brickwork",
+             "Diamond Lattice", "Chevron"],
+    easy:   ["Checker", "Grand Diamond", "Three Diamonds", "Columns", "Brickwork",
+             "Door Panel", "Diamond Lattice", "Wheel Window", "Chevron"],
     normal: ["Checker", "Grand Diamond", "Three Diamonds", "Columns", "Brickwork",
              "Door Panel", "Diamond Lattice", "Wheel Window", "Chevron"],
     hard:   ["Checker", "Columns", "Brickwork", "Diamond Lattice", "Chevron"],
@@ -1126,8 +1220,10 @@
      ============================================================ */
   /* 難易度ごとの目標セル数と、指で押せるセルの最小サイズ(px)。
      細かい難易度ほど下限も攻める */
-  const DIFF_TARGET = { easy: 10, normal: 40, hard: 80, vhard: 140 };
-  const DIFF_MIN_PX = { easy: 26, normal: 26, hard: 22, vhard: 19 };
+  const DIFF_TARGET = { veasy: 10, easy: 20, normal: 40, hard: 80, vhard: 140 };
+  const DIFF_MIN_PX = { veasy: 26, easy: 26, normal: 26, hard: 22, vhard: 19 };
+  /* 画面に並べる順(やさしい方から) */
+  const DIFF_ORDER = ["veasy", "easy", "normal", "hard", "vhard"];
 
   function randomFrame(diffKey, ratio, symmetric, panelW, panelH, want) {
     const domainW = symmetric ? 0.5 : 1;                        /* 分割する領域の幅 */
@@ -1211,7 +1307,8 @@
     COLOR_FAMILIES, relLuminance,
     rectCell, diamondSplit, gridCells, polyArea, clipConvex, clipToUnit, UNIT_RECT, pointInPoly, insidePoint, cleanPoly,
     WINDOW_SHAPES, HANDMADE, HANDMADE_BY_DIFF, fitsDifficulty, fitSlack, FIT_PANEL,
-    DIFF_TARGET, DIFF_MIN_PX, randomFrame,
+    DIFF_TARGET, DIFF_MIN_PX, DIFF_ORDER, randomFrame,
+    tappableCount, inTargetBand, buildInBand,
     insetConvex, ringCells, borderPlan, makeWindow, BORDER_MIN_TARGET,
     conformCells, curveLeading, bowPoints, segmentsCross, bowFits,
     CURVE_STYLES, pickCurveStyle, mirrorSymmetric,
