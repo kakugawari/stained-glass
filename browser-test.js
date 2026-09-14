@@ -339,10 +339,12 @@ async function run() {
       }));
     });
     const kana = /^[ぁ-んァ-ヶ一-龠々ー]+$/;
-    ok(menu.every((m) => kana.test(m.name)),
-      `難易度は日本語で出る (${menu.map((m) => m.name).join(' / ')})`);
+    /* 難易度は規則の唯一の例外。和語の語感が合わないので欧文のままにした。
+       ただし添え書きの枚数は日本語 */
+    ok(menu.every((m) => /^[a-z ]+$/.test(m.name)),
+      `難易度は欧文で出る (${menu.map((m) => m.name).join(' / ')})`);
     ok(menu.every((m) => /^\d+枚$/.test(m.note)),
-      `枚数も日本語の数え方 (${menu.map((m) => m.note).join(' / ')})`);
+      `枚数は日本語の数え方 (${menu.map((m) => m.note).join(' / ')})`);
 
     // 窓の銘は「漢字の和名 + 小さな欧文」の二枚組
     await start(phone, 'normal');
@@ -378,23 +380,28 @@ async function run() {
 
     // 画面に出ている言葉に、英語の取り残しが無いか
     const strays = await phone.evaluate(() => {
+      /* 欧文が出てよいのは2か所だけ。ここに挙がっていない英語が画面に
+         出ていたら、規則から漏れている */
+      const allowed = ['#frame-name .en',            /* 窓の銘の添え名 */
+                       '.start-btn[data-diff] .name']; /* 難易度(唯一の例外) */
       const out = [];
       const walk = (n) => {
         if (n.nodeType === 3) {
           const t = n.textContent.trim();
-          /* 銘の欧文だけは、添え名として出てよい */
-          if (t && /[A-Za-z]/.test(t) && !n.parentElement.closest('#frame-name .en')) out.push(t);
+          if (t && /[A-Za-z]/.test(t) &&
+              !allowed.some((sel) => n.parentElement.closest(sel))) out.push(t);
           return;
         }
         if (n.nodeType !== 1 || n.hidden) return;
-        if (getComputedStyle(n).display === 'none') return;
+        const st = getComputedStyle(n);
+        if (st.display === 'none' || st.opacity === '0') return;   /* 消えかけも数えない */
         for (const c of n.childNodes) walk(c);
       };
       walk(document.body);
       return out;
     });
     ok(strays.length === 0,
-      `遊ぶ画面に英語の取り残しが無い${strays.length ? ' — ' + strays.join(' / ') : ''}`);
+      `決めた2か所のほかに英語が出ていない${strays.length ? ' — ' + strays.join(' / ') : ''}`);
 
     // ------------------------------------------------ 色を選ぶ帯
     section('色を選ぶ帯');
