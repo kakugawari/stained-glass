@@ -771,6 +771,180 @@
         }, allTappable);
       } },
 
+    /* 青海波。めでたい波の文様。同じ大きさの弧が鱗のように重なる。
+       上のふちは弧が持ち上がり、下のふちは隣どうしの弧が谷で出会う。
+       弧は周期が同じなので、下の段の上のふちとぴたり合う */
+    { name: "Blue Ocean Waves", jp: "青海波", build(target) {
+        return closestTo(target, 2, 8, (cols) => {
+          const a = 1 / cols;                          /* 波ひとつの幅 */
+          const rows = Math.max(2, Math.round(1 / (a * 0.62 * PANEL_R)));
+          const h = 1 / rows;
+          /* 盛り上がり。h に近づけるほど鱗が深くなるが、両端が h - s まで
+             痩せて押せなくなる。0.40 だと細かい段まで出せる */
+          const s = h * 0.40;
+          const SEG = 16;
+          const bulge = (x) => {
+            const u = (((x % a) + a) % a) / a;
+            return s * Math.sin(u * Math.PI);
+          };
+          const cells = [];
+          for (let r = 0; r < rows; r++) {
+            const off = (r % 2) * a / 2;
+            const last = r === rows - 1;
+            for (let k = -1; k <= cols; k++) {
+              const x0 = k * a + off;
+              const top = [], bot = [];
+              for (let t = 0; t <= SEG; t++) {
+                const x = x0 + a * t / SEG;
+                top.push([x, r * h - bulge(x - off)]);
+                /* いちばん下だけは、まっすぐ底で止める。弧のままだと
+                   窓のふちに「弧の膨らみぶん」の三日月が残り、押せない */
+                bot.push([x, last ? 1 : (r + 1) * h - bulge(x - off - a / 2)]);
+              }
+              const c = clipToUnit([...top, ...bot.reverse()]);
+              if (c) cells.push(c);
+            }
+          }
+          return cells;
+        }, allTappable);
+      } },
+
+    /* 七宝。円を四隅に置くと、四枚の花弁と、あいだの四つ星になる。
+       いちばん花らしい文様。円は隣の升目の四分円と合わさって輪になる */
+    { name: "Seven Treasures", jp: "七宝", build(target) {
+        return closestTo(target, 1, 5, (cols) => {
+          const d = 1 / cols;
+          const rows = Math.max(1, Math.round(1 / (d * PANEL_R)));
+          const dy = 1 / rows;
+          const SEG = 9;
+          const arc = (cx, cy, a0, a1) => {
+            const out = [];
+            for (let t = 0; t <= SEG; t++) {
+              const a = a0 + (a1 - a0) * t / SEG;
+              out.push([cx + (d / 2) * Math.cos(a), cy + (dy / 2) * Math.sin(a)]);
+            }
+            return out;
+          };
+          const cells = [];
+          const P = Math.PI;
+          for (let r = 0; r < rows; r++) {
+            for (let k = 0; k < cols; k++) {
+              const x0 = k * d, y0 = r * dy, x1 = x0 + d, y1 = y0 + dy;
+              /* 四隅の花弁 (四分円) */
+              for (const [cx, cy, a0, a1] of [
+                [x0, y0, 0, P / 2], [x1, y0, P / 2, P],
+                [x1, y1, P, P * 1.5], [x0, y1, -P / 2, 0],
+              ]) {
+                const c = clipToUnit([[cx, cy], ...arc(cx, cy, a0, a1)]);
+                if (c) cells.push(c);
+              }
+              /* まんなかの四つ星 (升目から花弁を除いた所) */
+              const star = [
+                ...arc(x1, y0, P, P / 2),
+                ...arc(x1, y1, -P / 2, -P),
+                ...arc(x0, y1, 0, -P / 2),
+                ...arc(x0, y0, P / 2, 0),
+              ];
+              const c = clipToUnit(star);
+              if (c) cells.push(c);
+            }
+          }
+          return cells;
+        }, allTappable);
+      } },
+
+    /* 魔法陣。まんなかに六芒星、そのまわりに輪と放射の桟、外に四隅。
+       大正には心霊学や神秘思想の流行があったので、洋館の窓としても外れない。
+
+       弧は必ず「放射の桟で区切った一こま」を単位に刻む。
+       同じ縁を左右で違う刻みで近づけると、隙間と重なりが出る
+       (四隅は 90度、星のまわりは 60度。桟の数を 12 の倍数にすると、
+        どちらも桟の切れ目でぴたりと割り切れる) */
+    { name: "Magic Circle", jp: "魔法陣", build(target) {
+        const R = 0.42;                     /* いちばん外の輪 (横の半径) */
+        const K = PANEL_R;                  /* 縦は縮める。画面の上で真円に */
+        const T = Math.PI * 2;
+        const SEG = 4;                      /* 一こまを何本の折れ線で近づけるか */
+        const pt = (a, r) => [0.5 + r * Math.cos(a), 0.5 + r * K * Math.sin(a)];
+        /* 桟 i から桟 j まで、一こまずつ刻んだ弧 */
+        const span = (i, j, r, sectors) => {
+          const out = [];
+          const dir = j > i ? 1 : -1;
+          for (let k = i; k !== j; k += dir) {
+            for (let t = 0; t < SEG; t++) {
+              const u = (k + dir * t / SEG) * T / sectors;
+              out.push(pt(u, r));
+            }
+          }
+          out.push(pt(j * T / sectors, r));
+          return out;
+        };
+        const STEPS = [[1, 12], [2, 12], [1, 24], [2, 24]];
+        return closestTo(target, 0, STEPS.length - 1, (idx) => {
+          const [rings, sectors] = STEPS[idx];
+          const per = sectors / 6;            /* 星のひとこま (60度) ぶんの桟の数 */
+          /* 内円と星の大きさは、輪の数で変えない。
+             縮めると、星の切先 (高さは切先の半分) と、星と内円のあいだが
+             たちまち 18px を割る。ここを固定して、輪の数のほうを控える */
+          const r0 = 0.23;                    /* 星を囲む内円 */
+          const rs = 0.152;                   /* 星の切先 */
+          /* 六芒星の切先は、六角の辺に立てた正三角形の頂点。
+             中心からの距離は六角の半径の √3 倍になる */
+          const rh = rs / Math.sqrt(3);       /* 六角の半径 */
+          const cells = [];
+          /* まんなかの六角 */
+          cells.push([0, 1, 2, 3, 4, 5].map(k => pt(k * T / 6, rh)));
+          for (let k = 0; k < 6; k++) {
+            const a = k * T / 6;
+            cells.push([pt(a, rh), pt(a + T / 12, rs), pt(a + T / 6, rh)]);  /* 切先 */
+          }
+          /* 星と内円のあいだ。切先から外へ桟を通して6つに割る */
+          for (let k = 0; k < 6; k++) {
+            const iA = k * per - per / 2, iB = k * per + per / 2;
+            cells.push([
+              pt(iA * T / sectors, rs), pt(iA * T / sectors, r0),
+              ...span(iA, iB, r0, sectors),
+              pt(iB * T / sectors, rs), pt(k * T / 6, rh),
+            ]);
+          }
+          /* 輪と放射 */
+          for (let g = 0; g < rings; g++) {
+            const rIn = r0 + (R - r0) * g / rings;
+            const rOut = r0 + (R - r0) * (g + 1) / rings;
+            for (let k = 0; k < sectors; k++) {
+              cells.push([...span(k, k + 1, rIn, sectors),
+                          ...span(k + 1, k, rOut, sectors)]);
+            }
+          }
+          /* 輪の外。四隅を4枚にすると、縦長の窓では巨大な板が4枚できて
+             文様が負ける。放射の桟をそのまま外へ伸ばして、窓のふちまで割る */
+          const edge = (a) => {                /* 中心から角度 a の向きに、ふちまで */
+            const dx = Math.cos(a), dy = K * Math.sin(a);
+            const t = Math.min(Math.abs(dx) < 1e-9 ? Infinity : 0.5 / Math.abs(dx),
+                               Math.abs(dy) < 1e-9 ? Infinity : 0.5 / Math.abs(dy));
+            return [0.5 + dx * t, 0.5 + dy * t];
+          };
+          /* 窓の四隅が、どの角度にあるか */
+          const cornerAt = [[1, 0], [1, 1], [0, 1], [0, 0]].map(
+            ([cx, cy]) => Math.atan2((cy - 0.5) / K, cx - 0.5));
+          const norm = (a) => ((a % T) + T) % T;
+          for (let k = 0; k < sectors; k++) {
+            const a0 = k * T / sectors, a1 = (k + 1) * T / sectors;
+            const outer = [edge(a0)];
+            /* このこまの中に窓の角が入っていれば、そこを通す */
+            for (let c = 0; c < 4; c++) {
+              const w = norm(cornerAt[c] - a0);
+              if (w > 1e-9 && w < T / sectors - 1e-9) {
+                outer.push([[1, 0], [1, 1], [0, 1], [0, 0]][c]);
+              }
+            }
+            outer.push(edge(a1));
+            cells.push([...span(k, k + 1, R, sectors), ...outer.reverse()]);
+          }
+          return cells;
+        }, allTappable);
+      } },
+
     { name: "Checker", jp: "市松", build(target) {
         return closestTo(target, 1, 22, (n) => gridCells(colsFor(n), n));
       } },
@@ -1067,17 +1241,21 @@
 
   const HANDMADE_BY_DIFF = {
     veasy:  ["Tortoiseshell", "Linked Octagons", "Rising Steam",
+             "Blue Ocean Waves", "Seven Treasures",
              "Checker", "Grand Diamond", "Three Diamonds", "Sunburst",
              "Brickwork", "Diamond Lattice", "Chevron"],
     easy:   ["Tortoiseshell", "Linked Octagons", "Rising Steam",
              "Checker", "Grand Diamond", "Three Diamonds", "Columns",
              "Brickwork", "Door Panel", "Diamond Lattice", "Wheel Window", "Chevron"],
     normal: ["Hemp Leaf", "Tortoiseshell", "Basket Weave", "Linked Octagons", "Rising Steam",
+             "Blue Ocean Waves", "Seven Treasures", "Magic Circle",
              "Checker", "Grand Diamond", "Three Diamonds", "Columns", "Brickwork",
              "Door Panel", "Diamond Lattice", "Wheel Window", "Chevron"],
     hard:   ["Hemp Leaf", "Basket Weave", "Linked Octagons", "Rising Steam",
+             "Blue Ocean Waves", "Seven Treasures", "Magic Circle",
              "Checker", "Columns", "Brickwork", "Diamond Lattice", "Chevron"],
     vhard:  ["Hemp Leaf", "Linked Octagons",
+             "Blue Ocean Waves", "Seven Treasures",
              "Checker", "Columns", "Diamond Lattice", "Chevron"],
   };
 
