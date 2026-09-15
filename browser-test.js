@@ -678,6 +678,66 @@ async function run() {
     ok(barMetrics.bottomGap >= 16,
       `色の帯が画面のいちばん下から離れている (${barMetrics.bottomGap}px)`);
 
+    /* ------------------------------------------------------------
+       色の丸を抱く真鍮の輪 (CSS の重ね塗りで作っている)
+       ------------------------------------------------------------
+       輪は border-box、硝子は content-box に描き分けている。
+       どこか一枚が欠けると、丸が真鍮一色になったり、明暗が消えて
+       ただの縁取りに戻ったりする。しかも黙って起きるので、
+       実際の画素を読んで見張る
+       ------------------------------------------------------------ */
+    const bezel = await (async () => {
+      const png = (await phone.screenshot()).toString('base64');
+      return phone.evaluate(async (data) => {
+        const img = new Image();
+        img.src = 'data:image/png;base64,' + data;
+        await img.decode();
+        const cv = document.createElement('canvas');
+        cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+        const cx = cv.getContext('2d');
+        cx.drawImage(img, 0, 0);
+        const k = img.naturalWidth / window.innerWidth;
+        const at = (x, y) => {
+          const d = cx.getImageData(Math.round(x * k), Math.round(y * k), 1, 1).data;
+          return [d[0], d[1], d[2]];
+        };
+        const lum = (c) => 0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2];
+        const out = { lit: 0, warm: 0, n: 0, cores: [], worstLit: 999 };
+        for (const el of document.querySelectorAll('.swatch i')) {
+          const r = el.getBoundingClientRect();
+          const mx = r.left + r.width / 2, my = r.top + r.height / 2;
+          const rr = r.width / 2 * 0.93;      /* 輪のまんなか (幅の 7%) */
+          const d = rr * Math.SQRT1_2;
+          const tl = at(mx - d, my - d), br = at(mx + d, my + d);
+          const ring = at(mx, my - rr);
+          out.n++;
+          const gap = lum(tl) - lum(br);
+          if (gap > 12) out.lit++;
+          out.worstLit = Math.min(out.worstLit, Math.round(gap));
+          if (ring[0] > ring[2] + 18) out.warm++;   /* 金物なので赤みが青みに勝つ */
+          out.cores.push(at(mx, my));
+        }
+        /* 硝子の色が残っているか —— 真鍮一色になっていれば、
+           まんなかの色がどれも同じになる */
+        let near = 0;
+        for (let i = 0; i < out.cores.length; i++) {
+          for (let j = i + 1; j < out.cores.length; j++) {
+            const a = out.cores[i], b = out.cores[j];
+            if (Math.abs(a[0]-b[0]) + Math.abs(a[1]-b[1]) + Math.abs(a[2]-b[2]) < 24) near++;
+          }
+        }
+        out.near = near;
+        return out;
+      }, png);
+    })();
+    ok(bezel.n > 0 && bezel.lit === bezel.n,
+      `真鍮の輪は左上が明るく、右下が落ちる (${bezel.lit}/${bezel.n}・` +
+      `いちばん差の小さい丸で ${bezel.worstLit})`);
+    ok(bezel.warm === bezel.n,
+      `輪は金物の色をしている (赤みが青みに勝つ丸 ${bezel.warm}/${bezel.n})`);
+    ok(bezel.near === 0,
+      `硝子の色は輪に食われていない (同じ色に見える組 ${bezel.near} 組)`);
+
     // 押した色が、実際にその色味で嵌まるか
     const pick = await phone.evaluate(async () => {
       const sw = [...document.querySelectorAll('.swatch')];
