@@ -117,14 +117,129 @@ async function run() {
     await phone.goto(URL);
     await phone.waitForFunction(() => window.__app);
     ok(await phone.evaluate(() => window.__app.screen()) === 'title', '開くとタイトル画面が出る');
-    ok(await phone.evaluate(() => {
-      const r = document.getElementById('start-icon').getBoundingClientRect();
-      return r.width > 80 && r.height > 80;
-    }), 'アイコンが出ている');
+    const titlePlate = await phone.evaluate(() => {
+      const p = document.getElementById('start-plate').getBoundingClientRect();
+      const room = document.getElementById('room');
+      const rr = room.getBoundingClientRect();
+      return { w: Math.round(p.width), h: Math.round(p.height),
+               title: document.getElementById('start-title').textContent.trim(),
+               en: document.getElementById('start-en').textContent.trim(),
+               roomSrc: room.getAttribute('src'),
+               roomNat: room.naturalWidth + 'x' + room.naturalHeight,
+               roomOk: room.complete && room.naturalWidth > 0,
+               roomFit: getComputedStyle(room).objectFit,
+               roomCovers: Math.round(rr.width) >= window.innerWidth
+                        && Math.round(rr.height) >= window.innerHeight };
+    });
+    ok(titlePlate.title === '硝子窓' && /^STAINED GLASS$/.test(titlePlate.en),
+      `題が額に入って出ている (${titlePlate.title} / ${titlePlate.en})`);
+    ok(titlePlate.w > 140 && titlePlate.h > 70,
+      `額が十分な大きさ (${titlePlate.w}x${titlePlate.h}px)`);
+    ok(titlePlate.roomOk, `部屋の絵が届いている (${titlePlate.roomSrc} ${titlePlate.roomNat})`);
+    ok(titlePlate.roomFit === 'cover' && titlePlate.roomCovers,
+      '部屋の絵が画面いっぱいに切り取られている (余白が出ない)');
+
+    /* 絵の上に字を置くので、読めるかを実際の画素で測る。
+       札を透かしただけだった時は、窓の明るい所でコントラストが 1.40 まで
+       落ちていた (「のこり N 枚」がほとんど見えない) */
+    const HIDE_TITLE = `.start-btn .names, .start-btn .note,
+      #start-title, #start-en, #start-sub, #shelf-open span
+      { visibility: hidden !important; }`;
+    /* 「もどる」は地を敷いてあるので、visibility では地ごと消えてしまう。
+       字だけ透かして、地はそのまま測る */
+    const HIDE_PLAY = `#remain, #frame-name, #to-title
+      { color: transparent !important; text-shadow: none !important; }`;
+    const readContrast = async (page, where, hideCss, want) => {
+      await page.waitForFunction(() => {
+        const i = document.getElementById('room');
+        return i && i.complete && i.naturalWidth > 0;
+      });
+      await page.waitForTimeout(250);
+      /* 字を消して、字の乗る所の「いちばん明るい地」を拾う */
+      const hide = await page.addStyleTag({ content: hideCss });
+      await page.waitForTimeout(120);
+      const png = (await page.screenshot()).toString('base64');
+      const worst = await page.evaluate(async ({ data, play }) => {
+        const spots = [];
+        const add = (name, el) => {
+          if (!el) return;
+          const r = el.getBoundingClientRect();
+          if (r.width > 2 && r.height > 2) spots.push({ name, r });
+        };
+        if (play) {
+          add('のこり枚数', document.getElementById('remain'));
+          add('銘', document.querySelector('#frame-name .jp'));
+          add('もどる', document.getElementById('to-title'));
+        } else {
+          for (const el of document.querySelectorAll('.start-btn')) {
+            if (el.hidden) continue;
+            const key = el.dataset.diff || 'つづきから';
+            add(key + 'の名', el.querySelector('.names'));
+            add(key + 'の枚数', el.querySelector('.note'));
+          }
+          add('題', document.getElementById('start-title'));
+          add('欧文', document.getElementById('start-en'));
+          add('そえ書き', document.getElementById('start-sub'));
+          add('硝子棚', document.querySelector('#shelf-open span'));
+        }
+
+        const img = new Image();
+        img.src = 'data:image/png;base64,' + data;
+        await img.decode();
+        const cv = document.createElement('canvas');
+        cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+        const cx = cv.getContext('2d');
+        cx.drawImage(img, 0, 0);
+        const k = img.naturalWidth / window.innerWidth;
+        const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+        const L = (d) => 0.2126 * f(d[0]) + 0.7152 * f(d[1]) + 0.0722 * f(d[2]);
+        /* 文字の色 (--ink) と、金の色 (--gold)。どちらも使われている */
+        const INK = [215, 200, 170], GOLD = [206, 168, 96];
+        const ratio = (a, b) => {
+          const hi = Math.max(L(a), L(b)), lo = Math.min(L(a), L(b));
+          return (hi + 0.05) / (lo + 0.05);
+        };
+        let low = { n: 999 };
+        for (const s of spots) {
+          for (let i = 1; i <= 16; i++) {
+            for (let j = 1; j <= 4; j++) {
+              const px = Math.round((s.r.left + s.r.width * i / 17) * k);
+              const py = Math.round((s.r.top + s.r.height * j / 5) * k);
+              const d = cx.getImageData(px, py, 1, 1).data;
+              const n = Math.min(ratio(INK, d), ratio(GOLD, d));
+              if (n < low.n) low = { n, name: s.name, bg: [d[0], d[1], d[2]] };
+            }
+          }
+        }
+        return low;
+      }, { data: png, play: hideCss === HIDE_PLAY });
+      await hide.evaluate((el) => el.remove());
+      ok(worst.n >= want,
+        `${where}: 絵の上でも字が読める (いちばん薄い所で ${worst.n.toFixed(2)} ` +
+        `— ${worst.name}・地は rgb(${worst.bg}))`);
+    };
+    const titleContrast = (page, where) => readContrast(page, where, HIDE_TITLE, 4.5);
+    await titleContrast(phone, 'iPhone 16 Plus');
     ok(await phone.evaluate(() => document.getElementById('go-resume').hidden),
       'まっさらな時は「つづきから」を出さない');
     ok(await phone.evaluate(() => document.getElementById('bar').hidden),
       'タイトル画面では色の帯を出さない');
+    /* canvas は地の絵を透かすので、タイトルのあいだは何も描いてはいけない。
+       描いたままだと、遊んでいた窓と木枠が題の裏に透けて出る */
+    const titleCanvas = await phone.evaluate(() => {
+      const cv = document.getElementById('cv');
+      const c = cv.getContext('2d');
+      let inked = 0, n = 0;
+      for (let i = 1; i < 20; i++) {
+        for (let j = 1; j < 20; j++) {
+          const d = c.getImageData(cv.width * i / 20 | 0, cv.height * j / 20 | 0, 1, 1).data;
+          n++; if (d[3] > 8) inked++;
+        }
+      }
+      return { inked, n };
+    });
+    ok(titleCanvas.inked === 0,
+      `タイトルでは canvas に何も描かない (${titleCanvas.inked}/${titleCanvas.n} 点)`);
 
     // 段を5つに増やしたので、小さい画面でも全部が見えて押せるか確かめる
     const small = await browser.newContext({ ...devices[SMALL] });
@@ -170,6 +285,7 @@ async function run() {
       `塗りかけがあると「つづきから」が増えて ${withResume.n} 個になる`);
     ok(withResume.bottom <= withResume.vh,
       `6個でも、いちばん下の段が画面に収まる (${withResume.bottom}px / 画面 ${withResume.vh}px)`);
+    await titleContrast(tiny, 'iPhone SE');
     await small.close();
 
     await start(phone, 'normal');
@@ -178,7 +294,7 @@ async function run() {
     const fit = await phone.evaluate(() => ({
       wide: document.documentElement.scrollWidth - document.documentElement.clientWidth,
       tall: document.documentElement.scrollHeight - document.documentElement.clientHeight,
-      title: document.getElementById('start-sub').textContent.trim()
+      title: document.getElementById('start-sub').textContent.replace(/\s+/g, '').trim()
     }));
     ok(fit.wide <= 1, 'スマホ幅で横スクロールが出ない');
     ok(fit.tall <= 1, '縦にもはみ出さない(1画面に収まる)');
@@ -190,6 +306,85 @@ async function run() {
     ok(panel.x > 0 && panel.y > 0 &&
        panel.x + panel.w < size.width && panel.y + panel.h < size.height,
       `窓が画面に収まる (${Math.round(panel.w)}x${Math.round(panel.h)}px)`);
+
+    /* 遊ぶ画面でも、地は部屋の絵。canvas を敷き詰めると絵が隠れる */
+    const playRoom = await phone.evaluate(() => {
+      const cv = document.getElementById('cv');
+      const c = cv.getContext('2d');
+      let clear = 0, n = 0;
+      /* 窓の外を拾う。ここが透けていないと、部屋の絵が見えない */
+      const p = window.__app.state().panel;
+      for (let i = 1; i < 18; i++) {
+        for (let j = 1; j < 18; j++) {
+          const x = window.innerWidth * i / 18, y = window.innerHeight * j / 18;
+          /* 木枠の影は外へ滲むので、そのぶんは勘定に入れない */
+          if (x > p.x - 60 && x < p.x + p.w + 60 && y > p.y - 60 && y < p.y + p.h + 60) continue;
+          const d = c.getImageData(x * (cv.width / window.innerWidth) | 0,
+                                   y * (cv.height / window.innerHeight) | 0, 1, 1).data;
+          n++; if (d[3] < 8) clear++;
+        }
+      }
+      return { clear, n, veil: document.getElementById('room-veil').className };
+    });
+    ok(playRoom.clear === playRoom.n && playRoom.veil.includes('playing'),
+      `遊ぶ画面でも部屋の絵が見えている (窓の外 ${playRoom.clear}/${playRoom.n} 点が透けている)`);
+
+    /* 色の丸が canvas に隠れていないか。
+       canvas を fixed にした時、帯の上をふさいで硝子が選べなくなった */
+    const reach = await phone.evaluate(() => {
+      const out = [];
+      for (const el of document.querySelectorAll('.swatch')) {
+        const r = el.getBoundingClientRect();
+        const top = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+        if (!top || !el.contains(top) && top !== el) out.push(el.title + '→' + (top && top.id || top && top.className));
+      }
+      return out;
+    });
+    ok(reach.length === 0,
+      `色の丸はどれも指が届く (${reach.join(' / ') || 'ふさがれていない'})`);
+
+    /* 見出し (金の罫・のこり枚数) が、窓にも「もどる」にもぶつからない */
+    const hud = await phone.evaluate(() => {
+      const h = document.getElementById('hud').getBoundingClientRect();
+      const t = document.getElementById('to-title').getBoundingClientRect();
+      const p = window.__app.state().panel;
+      const hits = (a, b) => Math.min(a.right, b.right) > Math.max(a.left, b.left)
+                          && Math.min(a.bottom, b.bottom) > Math.max(a.top, b.top);
+      return { onArrow: hits(h, t), onPanel: h.bottom > p.y,
+               bottom: Math.round(h.bottom), top: Math.round(p.y) };
+    });
+    ok(!hud.onArrow && !hud.onPanel,
+      `見出しが窓にも矢印にもぶつからない (見出しの下端 ${hud.bottom}px / 窓の上端 ${hud.top}px)`);
+
+    await readContrast(phone, '遊ぶ画面', HIDE_PLAY, 4.5);
+
+    /* 硝子に地合い (練りむら) を足したぶん、描き直しが重くなっている。
+       いちばん枚数の多い vhard を、CPU 4倍おそい端末で測る */
+    const cdp = await phone.context().newCDPSession(phone);
+    await phone.evaluate(() => { window.__app.newWindow('vhard'); });
+    await phone.waitForTimeout(200);
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 4 });
+    const perf = await phone.evaluate(() => {
+      const s = window.__app.state();
+      for (let i = 0; i < s.cells.length; i += 2) {
+        if (s.hosts[i] !== i) continue;
+        const c = window.__app.cellCenter(i); window.__app.tapCell(c.x, c.y);
+      }
+      const t = [];
+      for (let k = 0; k < 11; k++) {
+        const t0 = performance.now();
+        window.__app.redraw();
+        t.push(performance.now() - t0);
+      }
+      t.sort((a, b) => a - b);
+      return { n: s.cells.length, mid: t[5], max: t[10] };
+    });
+    await cdp.send('Emulation.setCPUThrottlingRate', { rate: 1 });
+    await cdp.detach();
+    ok(perf.mid < 10,
+      `CPU 4倍おそい端末でも、硝子の描き直しが1コマに収まる ` +
+      `(vhard ${perf.n}枚で 中央値 ${perf.mid.toFixed(1)}ms / 最大 ${perf.max.toFixed(1)}ms)`);
+    await start(phone, 'normal');
 
     // ------------------------------------------------ 硝子を嵌める
     section('硝子を嵌める');
@@ -402,6 +597,7 @@ async function run() {
       /* 欧文が出てよいのは2か所だけ。ここに挙がっていない英語が画面に
          出ていたら、規則から漏れている */
       const allowed = ['#frame-name .en',            /* 窓の銘の添え名 */
+                       '#start-en',                   /* 題の添え名 (額の中) */
                        '.start-btn[data-diff] .name']; /* 難易度(唯一の例外) */
       const out = [];
       const walk = (n) => {
@@ -729,34 +925,24 @@ async function run() {
     });
     await phone.waitForTimeout(150);
 
-    // ------------------------------------------------ 壁の色
-    section('壁の色');
+    // ------------------------------------------------ 壁
+    section('壁');
     await phone.locator('#to-title').tap();
     await phone.waitForTimeout(150);
-    const wallOf = () => phone.evaluate(() => {
-      const cv = document.getElementById('cv');
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const d = cv.getContext('2d').getImageData(4, 4, 1, 1).data;
+    const wall = await phone.evaluate(() => {
+      const d = document.getElementById('cv').getContext('2d')
+        .getImageData(4, 4, 1, 1).data;
       return [d[0], d[1], d[2]];
     });
-    ok(await phone.evaluate(() => window.__app.theme()) === 'night', '最初は暗い部屋');
-    const nightWall = await wallOf();
-    await phone.locator('#theme-toggle').tap();
-    await phone.waitForTimeout(200);
-    const dayWall = await wallOf();
-    ok(await phone.evaluate(() => window.__app.theme()) === 'day' &&
-       dayWall[0] + dayWall[1] + dayWall[2] > nightWall[0] + nightWall[1] + nightWall[2] + 200,
-      `押すと白い壁になる (rgb(${nightWall}) → rgb(${dayWall}))`);
-    await phone.reload();
-    await phone.waitForFunction(() => window.__app);
-    ok(await phone.evaluate(() => window.__app.theme()) === 'day', '選んだ壁は覚えている');
-    await phone.locator('#theme-toggle').tap();
-    await phone.waitForTimeout(200);
-    ok(await phone.evaluate(() => window.__app.theme()) === 'night', '暗い部屋に戻せる');
-    /* 画面の上の色 (iOS のステータスバーの地) も、壁と一緒に変わる */
+    ok(wall[0] + wall[1] + wall[2] < 180,
+      `壁は薄暗い洋館ひとつ (rgb(${wall}))`);
+    /* 白い壁の版はやめたので、切り替えるボタンも無い */
+    ok(await phone.evaluate(() => !document.getElementById('theme-toggle')),
+      '壁を切り替えるボタンは無い');
+    /* 画面の上の色 (iOS のステータスバーの地) も壁にそろえる */
     ok(await phone.evaluate(() =>
       document.querySelector('meta[name="theme-color"]').content.toLowerCase()) === '#14110e',
-      '画面の上の色も暗い部屋にそろう');
+      '画面の上の色も壁にそろう');
     await phone.locator('#go-resume').tap();
     await phone.waitForTimeout(250);
 
@@ -808,6 +994,14 @@ async function run() {
     ok(sameShape && worstGap < 1e-4,
       `窓の割り方もそのまま戻る (ずれ ${(worstGap * 100).toFixed(4)}% 以内)`);
     ok(back.remain === kept.remain, `のこり枚数もそのまま (${back.remain})`);
+    /* 嵌めた硝子が、開き直した拍子に隣へ写って増えていないか。
+       帯を並べる前に窓を戻していた頃は、板が本当より高く出て、
+       かけらの預け先が変わり、5枚が21枚に広がることがあった */
+    ok(back.fills.filter((f) => f !== null).length === keptFilled,
+      `開き直しても、嵌めた硝子が増えも減りもしない ` +
+      `(${keptFilled} 枚 → ${back.fills.filter((f) => f !== null).length} 枚)`);
+    ok(JSON.stringify(back.hosts) === JSON.stringify(kept.hosts),
+      'かけらの預け先も、開き直す前と同じ');
 
     // もどる → タイトル
     await phone.locator('#to-title').tap();
@@ -978,6 +1172,22 @@ async function run() {
       '横向きにしても窓が画面からはみ出さない');
     ok(land.fills.filter((f) => f !== null).length === beforeTurn && beforeTurn > 0,
       `向きを変えても、嵌めた硝子が消えない (${beforeTurn} 枚)`);
+
+    /* 横向きのタイトル。縦に積んだままだと 739x430 で 459px 必要になり、
+       いちばん下の very hard が画面の外へ出ていた */
+    await phone.evaluate(() => window.__app.showTitle());
+    await phone.waitForTimeout(200);
+    const landTitle = await phone.evaluate(() => {
+      const list = [...document.querySelectorAll('.start-btn')].filter((e) => !e.hidden);
+      const last = list[list.length - 1].getBoundingClientRect();
+      const first = list[0].getBoundingClientRect();
+      return { n: list.length, bottom: Math.round(last.bottom), top: Math.round(first.top),
+               vh: window.innerHeight };
+    });
+    ok(landTitle.top >= 0 && landTitle.bottom <= landTitle.vh,
+      `横向きでも品書きが全部見える (${landTitle.n}個・${landTitle.top}〜` +
+      `${landTitle.bottom}px / 画面 ${landTitle.vh}px)`);
+
     await phone.setViewportSize({ width: 390, height: 844 });
 
     // ------------------------------------------------ アイコン
@@ -992,6 +1202,13 @@ async function run() {
     ok(res.ok(), `${apple} が配信される`);
     const manifest = await (await desk.request.get(URL + 'manifest.json')).json();
     ok(manifest.icons.every((i) => i.type === 'image/png'), 'manifest のアイコンも PNG');
+    /* 部屋の絵。配信されること、重すぎないこと、オフラインぶんに入っていること */
+    const room = await desk.request.get(URL + 'room.jpg');
+    const roomKB = Math.round((await room.body()).length / 1024);
+    ok(room.ok() && roomKB < 400, `room.jpg が配信される (${roomKB} KB)`);
+    const swSrc = await (await desk.request.get(URL + 'sw.js')).text();
+    ok(swSrc.includes('"./room.jpg"'),
+      '部屋の絵がオフラインぶんのキャッシュに入っている');
 
     // ------------------------------------------------ 更新とオフライン
     section('更新とオフライン');
@@ -1024,7 +1241,7 @@ async function run() {
     // 元に戻したものも、1 回のリロードで戻る
     await swPage.reload();
     await swPage.waitForTimeout(400);
-    ok((await swPage.textContent('#start-sub')).trim() === '硝子を嵌めて、窓に光を灯す',
+    ok((await swPage.textContent('#start-sub')).replace(/\s+/g, '') === '硝子を嵌めて、窓に光を灯す。',
       '元に戻したものも 1 回のリロードで戻る');
 
     // つながらなくても遊べるか
