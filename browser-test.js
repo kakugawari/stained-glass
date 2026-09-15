@@ -384,6 +384,21 @@ async function run() {
     ok(perf.mid < 10,
       `CPU 4倍おそい端末でも、硝子の描き直しが1コマに収まる ` +
       `(vhard ${perf.n}枚で 中央値 ${perf.mid.toFixed(1)}ms / 最大 ${perf.max.toFixed(1)}ms)`);
+
+    /* 木枠は canvas に焼いて貼るので、毎コマの負担は無い。
+       焼き直すのは窓を引いた時と向きを変えた時だけ。
+       段ごとに2本引いていた頃は 100ms かかり、難易度を押すと一瞬とまった */
+    const bake = await phone.evaluate(() => {
+      const t = [];
+      for (let k = 0; k < 7; k++) {
+        const t0 = performance.now();
+        window.__app.rebuildFrame();
+        t.push(performance.now() - t0);
+      }
+      t.sort((a, b) => a - b);
+      return t[3];
+    });
+    ok(bake < 90, `木枠を焼き直すのが速い (${bake.toFixed(1)}ms)`);
     await start(phone, 'normal');
 
     // ------------------------------------------------ 硝子を嵌める
@@ -732,7 +747,7 @@ async function run() {
     }));
     ok(shelf.shown && shelf.colors === 20 && shelf.locked === 10,
       `棚には 20 色ぜんぶ並び、まだの ${shelf.locked} 色は灰色`);
-    ok(shelf.frames === 5 && shelf.framesLocked === 4,
+    ok(shelf.frames === 6 && shelf.framesLocked === 5,
       `木枠は ${shelf.frames} 種、まだの ${shelf.framesLocked} 種は灰色`);
     ok(/つぎは/.test(shelf.tally) && /あと/.test(shelf.tally),
       `つぎに増える物が出ている (${shelf.tally.replace(/\s+/g, ' ').trim()})`);
