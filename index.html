@@ -643,6 +643,7 @@
    ここでは名前を借りて、描画・音・操作に専念する */
 const {
   COLOR_FAMILIES, clipConvex, UNIT_RECT, pointInPoly, insidePoint, attachSlivers,
+  TAP_MIN_PX, frameCover,
   WINDOW_SHAPES, HANDMADE, HANDMADE_BY_DIFF, makeWindow, DIFF_TARGET, relLuminance,
   pickCurveStyle, buildInBand,
   FRAMES, unlockedColors, unlockedFrames, nextUnlock, newlyUnlocked,
@@ -730,7 +731,9 @@ const theme = {
   glassAlpha: 0.95,
   glowBase: 0.05, glowScale: 0.24,
   breatheBase: 0.07, breatheAmp: 0.05, completeBreathe: 0.12,
-  lead: "#17130f", leadWidth: 3,
+  lead: "#17130f", leadWidth: 3.6,
+  /* 鉛線の峰。真っ白だと針金に見えるので、鈍い錫色にする */
+  leadRidge: "rgba(126,116,100,0.34)",
   emptyFill: "rgba(13,19,32,0.9)",
   emptyStroke: "rgba(215,200,170,0.28)",
   frame: ["#4a3626", "#33251a", "#241a12"],
@@ -832,6 +835,8 @@ function resize() {
   layoutPanel();
   if (startMenuEl) paintRosettes();
   refreshHosts();
+  updateRemain();
+  settleComplete();    /* 向きを変えて預け先が変わり、埋まりきることがある */
   redrawGlass();
 }
 window.addEventListener("resize", resize);
@@ -935,7 +940,7 @@ let shapePoly = WINDOW_SHAPES[0].poly.call(WINDOW_SHAPES[0]);   /* 現在の外�
    ※ 一度嵌めた硝子は消さない */
 function refreshHosts() {
   mids = cells.map(insidePoint);
-  hosts = attachSlivers(cells, PW, PH);
+  hosts = attachSlivers(cells, PW, PH, TAP_MIN_PX, shapePoly);
   for (let i = 0; i < cells.length; i++) {
     const h = hosts[i];
     if (h !== i && fills[h] === null && fills[i] !== null) fills[h] = fills[i];
@@ -1175,6 +1180,7 @@ function enterPlay() {
   hudEl.hidden = false;
   resize();            /* 操作帯の高さが変わるので測り直す */
   updateRemain();
+  settleComplete();    /* 開き直しで のこり 0 枚になった窓を、ちゃんと仕上げる */
 }
 
 function startNew(diffKey) {
@@ -1289,6 +1295,40 @@ function mottlePattern(c) {
     blobs(40, 0.16, 0.38, 0.30, 0.66);    /* 大きな練りむら */
     blobs(70, 0.06, 0.16, 0.22, 0.46);    /* 中くらいのゆらぎ */
     blobs(110, 0.02, 0.06, 0.16, 0.36);   /* 細かい気泡 */
+    /* 結晶のひび。参考にした硝子は、もやだけでなく細い筋が枝分かれして
+       走っている。これがあると「曇り硝子」ではなく「色硝子」に見える */
+    const vein = (x0, y0, len, depth, a) => {
+      let x = x0, y = y0, ang = Math.random() * Math.PI * 2;
+      const seg = [[x, y]];
+      for (let i = 0; i < len; i++) {
+        ang += (Math.random() - 0.5) * 0.9;
+        x += Math.cos(ang) * 5; y += Math.sin(ang) * 5;
+        seg.push([x, y]);
+      }
+      for (const [dx, dy] of wrap) {
+        m.beginPath();
+        m.moveTo(seg[0][0] + dx, seg[0][1] + dy);
+        for (let i = 1; i < seg.length; i++) m.lineTo(seg[i][0] + dx, seg[i][1] + dy);
+        m.strokeStyle = `rgba(255,255,255,${a})`;
+        m.lineWidth = 1.1;
+        m.stroke();
+        m.strokeStyle = `rgba(0,0,0,${a * 0.7})`;
+        m.lineWidth = 0.7;
+        m.stroke();
+      }
+      /* 枝を出す */
+      if (depth > 0) {
+        for (let k = 0; k < 2; k++) {
+          const at = seg[2 + ((Math.random() * (seg.length - 3)) | 0)];
+          vein(at[0], at[1], Math.max(2, len >> 1), depth - 1, a * 0.75);
+        }
+      }
+    };
+    m.lineCap = "round"; m.lineJoin = "round";
+    for (let i = 0; i < 14; i++) {
+      vein(Math.random() * N, Math.random() * N, 5 + ((Math.random() * 6) | 0), 2, 0.22);
+    }
+
     /* 圧延の筋。硝子は板に延ばすので、うっすら流れの向きが出る */
     m.lineCap = "round";
     for (let i = 0; i < 16; i++) {
@@ -1343,9 +1383,16 @@ function paintGlass(c, list, paint, box, lead, mid) {
         c.fill();
         c.restore();
       }
+      /* 鉛線は断面が丸い。芯を暗く太く、その上に細い光の筋を重ねると
+         「平らな黒線」ではなく、盛り上がった鉛の桟に見える */
       c.strokeStyle = theme.lead;
       c.lineWidth = lead;
       c.stroke();
+      if (lead >= 2.4) {
+        c.strokeStyle = theme.leadRidge;
+        c.lineWidth = lead * 0.38;
+        c.stroke();
+      }
     } else {
       c.fillStyle = theme.emptyFill;
       c.globalAlpha = 1;
@@ -1502,6 +1549,19 @@ function fillGroup(h, defer) {
   } else {
     saveSoon();
   }
+}
+
+/* 嵌め終わっているのに、まだ仕上げになっていない窓を仕上げる。
+   木枠に隠れるセルを持ち主に預けるようにしたので、**前に保存した窓**を
+   開き直した拍子に、のこり 0 枚になることがある。放っておくと鐘が鳴らず、
+   終われない窓が手もとに残ってしまう */
+function settleComplete() {
+  if (completed || atTitle || cells.length === 0) return;
+  if (!fills.every(f => f !== null)) return;
+  completed = true;
+  pealBells();
+  countCleared();
+  saveNow();
 }
 
 /* 窓を1つ仕上げた。棚に飾り、何か増えたら知らせる */
@@ -1697,20 +1757,29 @@ function drawBackground() {
    描かれていないので、下の輪を削らない。
    canvas を1枚用意して焼いておき、毎コマは貼るだけ
    ------------------------------------------------------------ */
+const hexToRgb = (hex) => [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16));
+
 const frameCv = document.createElement("canvas");
 const frameCtx = frameCv.getContext("2d");
 let frameStamp = "";        /* 焼いた時の条件。変わった時だけ焼き直す */
 
 const GILT = "rgba(214,178,104,";     /* 金の座金と細線 */
 
+let frameBox = { x: 0, y: 0, w: 1, h: 1 };
+
 function buildFrame() {
   const f = curFrame();
-  const b = Math.max(10, Math.min(PW, PH) * 0.058);
-  frameCv.width = Math.max(1, Math.round(W * DPR));
-  frameCv.height = Math.max(1, Math.round(H * DPR));
+  const b = frameCover(PW, PH) * 2 / 2.24;    /* 覆う深さ = b * 2.24 / 2 */
+  /* 画面ぜんぶではなく、枠の入る所だけを焼く。
+     全面 (1290x2217) だと、毎コマ 2.9M 画素を貼ることになる */
+  const pad = b * 4;
+  frameBox = { x: Math.floor(PX - pad), y: Math.floor(PY - pad),
+               w: Math.ceil(PW + pad * 2), h: Math.ceil(PH + pad * 2) };
+  frameCv.width = Math.max(1, Math.round(frameBox.w * DPR));
+  frameCv.height = Math.max(1, Math.round(frameBox.h * DPR));
   const c = frameCtx;
-  c.setTransform(DPR, 0, 0, DPR, 0, 0);
-  c.clearRect(0, 0, W, H);
+  c.setTransform(DPR, 0, 0, DPR, -frameBox.x * DPR, -frameBox.y * DPR);
+  c.clearRect(frameBox.x, frameBox.y, frameBox.w, frameBox.h);
   c.lineJoin = "round";
 
   const ring = (w, style, erase) => {
@@ -1733,35 +1802,71 @@ function buildFrame() {
   c.beginPath(); framePath(c);
   c.lineWidth = b * 2.1; c.strokeStyle = "rgba(0,0,0,0.95)"; c.stroke();
   c.restore();
+  /* 影が硝子の上まで滲んでいるので、外形の内側は抜いておく */
+  c.save();
+  c.globalCompositeOperation = "destination-out";
+  c.beginPath(); framePath(c); c.fill();
+  c.restore();
 
-  /* 地の色 */
-  const wg = c.createLinearGradient(PX, PY, PX + PW, PY + PH);
-  wg.addColorStop(0, f.wood[0]);
-  wg.addColorStop(0.5, f.wood[1]);
-  wg.addColorStop(1, f.wood[2]);
-  /* 段ごとの高さ。出っぱりは白を、へこみは黒を薄く重ねる */
-  const up = (a) => `rgba(255,232,186,${a})`;   /* 当たる光はほのかに暖かい */
-  const dn = (a) => `rgba(0,0,0,${a})`;
 
-  /*  外 ← → 内 (幅は b の倍。外側の幅で描いて、内側の幅で抜く) */
-  const band = (wOut, wIn, shade) => {
-    ring(wOut, wg, wIn);
-    if (shade) ring(wOut, shade, wIn);
+  /* ------------------------------------------------------------
+     断面を蒲鉾に。段ごとに平らな輪を置いた頃は、縞にしか見えなかった。
+     本物の枠は丸く盛り上がっていて、峰が光り、両脇の溝が落ちる。
+     外から内へ細かく刻み、位置ごとの「高さ」で明暗を付ける
+     ------------------------------------------------------------ */
+  /* t: 0=外のふち 〜 1=硝子に接するふち。返り値は -1(谷) 〜 +1(峰) */
+  const relief = (t) => {
+    if (t < 0.06) return -0.85;                                  /* 外の角 */
+    if (t < 0.16) return Math.sin((t - 0.06) / 0.10 * Math.PI) * 0.75;   /* 外の小縁 */
+    if (t < 0.24) return -0.95;                                  /* 溝 */
+    /* 本体の峰。単なる山だと帯ぜんぶが明るくなって、のっぺり見える。
+       峰は細く、そこから両脇へ長く落とす */
+    if (t < 0.80) {
+      const u = (t - 0.24) / 0.56;
+      return Math.pow(Math.sin(u * Math.PI), 2.2) * 1.0 - 0.10;
+    }
+    if (t < 0.88) return -0.95;                                  /* 溝 */
+    if (t < 0.97) return Math.sin((t - 0.88) / 0.09 * Math.PI) * 0.6;    /* 内の小縁 */
+    return -0.9;                                                 /* 内の角 */
   };
-  band(b * 2.24, b * 2.06, dn(0.60));     /* 外のいちばん縁 */
-  band(b * 2.06, b * 1.34, up(0.16));     /* 面取りの外 (広い出っぱり) */
-  ring(b * 1.34, GILT + "0.65)", b * 1.18);   /* 金の象嵌 (1本だけ) */
-  band(b * 1.18, b * 0.52, dn(0.30));     /* 溝 (いちばん広い段・へこみ) */
-  band(b * 0.52, b * 0.26, up(0.22));     /* 面取りの内 */
-  band(b * 0.26, 0,         dn(0.66));    /* 硝子に接する内の縁 */
+  /* 淡い木ほど白を足しても飛ぶだけなので、明るさに応じて手加減する */
+  const pale = relLuminance(f.wood[1]);
+  const upK = 0.20 * (1 - pale * 0.55), dnK = 0.58;
+  /* 段ごとに「地 + 明暗」の2本を引くと、太い線を 50本ちかく引くことになり、
+     木枠を焼くのに 100ms かかっていた (難易度を押した時に一瞬とまる)。
+     明暗はあらかじめ色に混ぜて、1段1本にする */
+  const base = hexToRgb(f.wood[1]);
+  const mixed = (h) => {
+    const k = h > 0 ? h * upK : -h * dnK;
+    const to = h > 0 ? [255, 232, 186] : [0, 0, 0];
+    return `rgb(${base.map((v, i) => Math.round(v + (to[i] - v) * k)).join(",")})`;
+  };
+  const FULL = b * 2.24, STEPS = 15;
+  for (let i = 0; i < STEPS; i++) {
+    const t = i / (STEPS - 1);
+    ring(FULL * (1 - t * 0.999), mixed(relief(t)), 0);   /* 太いほうから順に */
+  }
+  /* 外の溝の底に、金の象嵌を1本 */
+  ring(FULL * 0.79, GILT + "0.55)", 0);
+  ring(FULL * 0.75, mixed(relief(0.26)), 0);
+
+  /* 古びと磨きむら。硝子と同じ斑を薄くかけると、均一な樹脂ではなく
+     「使われてきた金物」に見える。`source-atop` なので枠の上にだけ乗る
+     (混ぜ方は選べないぶん、濃さは控えめに) */
+  c.save();
+  c.globalCompositeOperation = "source-atop";
+  c.globalAlpha = 0.08;      /* 濃くすると、灰の斑が真鍮の色を食う */
+  c.fillStyle = mottlePattern(c);
+  c.fillRect(PX - b * 3, PY - b * 3, PW + b * 6, PH + b * 6);
+  c.restore();
 
   /* 左上から光。枠の上にだけ重ねる (source-atop) */
   c.save();
   c.globalCompositeOperation = "source-atop";
   const lit = c.createLinearGradient(PX, PY, PX + PW, PY + PH);
-  lit.addColorStop(0, "rgba(255,236,200,0.20)");
+  lit.addColorStop(0, "rgba(255,236,200,0.13)");
   lit.addColorStop(0.45, "rgba(255,238,206,0.02)");
-  lit.addColorStop(1, "rgba(0,0,0,0.22)");
+  lit.addColorStop(1, "rgba(0,0,0,0.28)");
   c.fillStyle = lit;
   c.fillRect(PX - b * 3, PY - b * 3, PW + b * 6, PH + b * 6);
   c.restore();
@@ -1771,23 +1876,103 @@ function buildFrame() {
   const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
   const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
   const studs = [
-    [cx, Math.min(...ys)], [cx, Math.max(...ys)],
-    [Math.min(...xs), cy], [Math.max(...xs), cy],
+    [cx, Math.min(...ys), 0], [cx, Math.max(...ys), 0],
+    [Math.min(...xs), cy, Math.PI / 2], [Math.max(...xs), cy, Math.PI / 2],
   ];
-  const r = b * 0.82;
-  for (const [sx, sy] of studs) {
+  /* ------------------------------------------------------------
+     帯に彫り。参考にした真鍮の輪は、のっぺりした金属ではなく
+     細かい唐草が一面に彫ってある。等間隔に小さな刻みを打つだけでも、
+     「磨いた板」から「あつらえた金物」に変わる
+     ------------------------------------------------------------ */
+  {
+    const o = frameOutline;
+    const pts = o.map(q => [ux(q[0]), vy(q[1])]);
+    /* 外向きの法線がどちらか、重心との位置関係で決める */
+    let gx = 0, gy = 0;
+    for (const q of pts) { gx += q[0]; gy += q[1]; }
+    gx /= pts.length; gy /= pts.length;
+    const seg = [];
+    let total = 0;
+    for (let i = 0; i < pts.length; i++) {
+      const a = pts[i], nx = pts[(i + 1) % pts.length];
+      const d = Math.hypot(nx[0] - a[0], nx[1] - a[1]);
+      seg.push({ a, b: nx, d, at: total });
+      total += d;
+    }
+    const GAP = Math.max(7, b * 0.72);
+    const N = Math.max(8, Math.round(total / GAP));
+    c.save();
+    c.globalCompositeOperation = "source-atop";
+    for (let k = 0; k < N; k++) {
+      const want = total * k / N;
+      const s0 = seg.find(q => want >= q.at && want < q.at + q.d) || seg[0];
+      const u = (want - s0.at) / (s0.d || 1);
+      const px = s0.a[0] + (s0.b[0] - s0.a[0]) * u;
+      const py = s0.a[1] + (s0.b[1] - s0.a[1]) * u;
+      let tx = (s0.b[0] - s0.a[0]) / (s0.d || 1), ty = (s0.b[1] - s0.a[1]) / (s0.d || 1);
+      let ox = ty, oy = -tx;                       /* 法線 */
+      if ((px + ox - gx) ** 2 + (py + oy - gy) ** 2 < (px - gx) ** 2 + (py - gy) ** 2) {
+        ox = -ox; oy = -oy;                        /* 内を向いていたら裏返す */
+      }
+      const off = b * 2.24 * 0.24;                 /* 帯のまんなかへ */
+      c.save();
+      c.translate(px + ox * off, py + oy * off);
+      c.rotate(Math.atan2(ty, tx));
+      const e = b * 0.20;
+      c.lineWidth = 0.8; c.lineCap = "round";
+      /* 彫りは「沈んだ線」と「その脇の光」の二本で立つ */
+      for (const [col, dy] of [["rgba(58,40,16,0.34)", 0], ["rgba(255,242,210,0.20)", 0.7]]) {
+        c.strokeStyle = col;
+        c.beginPath();
+        c.moveTo(-e, dy); c.quadraticCurveTo(0, -e * 0.9 + dy, e, dy);
+        c.moveTo(-e * 0.45, dy + e * 0.5);
+        c.lineTo(e * 0.45, dy + e * 0.5);
+        c.stroke();
+      }
+      c.restore();
+    }
+    c.restore();
+  }
+
+  /* 四つ星に、左右の飾りを添える。ただの菱形だと打ち込んだ釘に見える */
+  const r = b * 1.0;
+  for (const [sx, sy, turn] of studs) {
     c.save();
     c.translate(sx, sy);
-    c.rotate(Math.PI / 4);
-    c.beginPath(); c.rect(-r / 2, -r / 2, r, r);
-    const sg = c.createLinearGradient(-r / 2, -r / 2, r / 2, r / 2);
-    sg.addColorStop(0, "rgb(236,208,146)");
-    sg.addColorStop(0.5, "rgb(196,158,90)");
-    sg.addColorStop(1, "rgb(132,100,52)");
+    c.rotate(turn);                       /* 飾りは枠に沿わせる */
+    const sg = c.createLinearGradient(-r, -r, r, r);
+    sg.addColorStop(0, "rgb(244,219,160)");
+    sg.addColorStop(0.42, "rgb(206,168,96)");
+    sg.addColorStop(1, "rgb(120,90,46)");
+
+    /* 左右に添える小さな葉 */
+    c.strokeStyle = "rgba(30,22,12,0.55)"; c.lineWidth = 0.9;
+    for (const dir of [-1, 1]) {
+      c.beginPath();
+      c.moveTo(dir * r * 0.52, 0);
+      c.quadraticCurveTo(dir * r * 1.0, -r * 0.30, dir * r * 1.34, 0);
+      c.quadraticCurveTo(dir * r * 1.0, r * 0.30, dir * r * 0.52, 0);
+      c.closePath();
+      c.fillStyle = sg; c.fill(); c.stroke();
+    }
+
+    /* 四つ星 (辺をへこませた菱形) */
+    c.beginPath();
+    const pt = r * 0.72, waist = r * 0.20;
+    c.moveTo(0, -pt);
+    c.quadraticCurveTo(waist, -waist, pt, 0);
+    c.quadraticCurveTo(waist, waist, 0, pt);
+    c.quadraticCurveTo(-waist, waist, -pt, 0);
+    c.quadraticCurveTo(-waist, -waist, 0, -pt);
+    c.closePath();
     c.fillStyle = sg; c.fill();
-    c.strokeStyle = "rgba(24,18,10,0.75)"; c.lineWidth = 1.2; c.stroke();
-    c.beginPath(); c.rect(-r / 6, -r / 6, r / 3, r / 3);
-    c.fillStyle = "rgba(20,15,9,0.45)"; c.fill();
+    c.strokeStyle = "rgba(28,20,11,0.8)"; c.lineWidth = 1.1; c.stroke();
+
+    /* 中心の窪みと、上からの光 */
+    c.beginPath(); c.arc(0, 0, r * 0.17, 0, Math.PI * 2);
+    c.fillStyle = "rgba(24,18,10,0.5)"; c.fill();
+    c.beginPath(); c.arc(-r * 0.05, -r * 0.05, r * 0.11, 0, Math.PI * 2);
+    c.fillStyle = "rgba(255,238,200,0.35)"; c.fill();
     c.restore();
   }
 }
@@ -1796,7 +1981,7 @@ function drawWoodFrame() {
   const stamp = `${frameKey}|${Math.round(PX)}|${Math.round(PY)}|` +
                 `${Math.round(PW)}|${Math.round(PH)}|${curShape}|${W}x${H}|${DPR}`;
   if (stamp !== frameStamp) { buildFrame(); frameStamp = stamp; }
-  ctx.drawImage(frameCv, 0, 0, W, H);
+  ctx.drawImage(frameCv, frameBox.x, frameBox.y, frameBox.w, frameBox.h);
 }
 
 function drawCompleteRays(time) {
@@ -1928,8 +2113,7 @@ const TIERS = [
   { key: "vhard",  name: "very hard", jp: "熟練の硝子",     n: "140枚", fam: "菫" },
 ];
 
-const hexToRgbList = (hex) =>
-  [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16)).join(",");
+const hexToRgbList = (hex) => hexToRgb(hex).join(",");
 
 /* 品書きに添える小さな硝子の花。段ごとの色で、花弁を輪に並べる */
 function paintRosette(cv, famName, size) {
@@ -2246,6 +2430,40 @@ window.__app = {
     updateRemain(); redrawGlass();
   },
   redraw: () => redrawGlass(),
+  rebuildFrame: () => { frameStamp = ""; drawWoodFrame(); },
+  /* 木枠が実際に覆っている、いちばん深い所 (外形からの距離 px)。
+     線の太さから机上で出した値と合っているかを確かめる */
+  frameDeepest: () => {
+    drawWoodFrame();
+    const img = frameCtx.getImageData(0, 0, frameCv.width, frameCv.height);
+    const seg = [];
+    for (let i = 0; i < shapePoly.length; i++) {
+      const a = shapePoly[i], b2 = shapePoly[(i + 1) % shapePoly.length];
+      seg.push([ux(a[0]), vy(a[1]), ux(b2[0]), vy(b2[1])]);
+    }
+    const depth = (x, y) => {
+      let best = Infinity;
+      for (const [ax, ay, bx, by] of seg) {
+        const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
+        let t = L ? ((x - ax) * dx + (y - ay) * dy) / L : 0;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        const d = Math.hypot(x - (ax + t * dx), y - (ay + t * dy));
+        if (d < best) best = d;
+      }
+      return best;
+    };
+    let deepest = 0;
+    for (let py = 0; py < frameCv.height; py += 2) {
+      for (let px = 0; px < frameCv.width; px += 2) {
+        if (img.data[(py * frameCv.width + px) * 4 + 3] <= 80) continue;
+        const x = px / DPR + frameBox.x, y = py / DPR + frameBox.y;
+        if (!pointInPoly((x - PX) / PW, (y - PY) / PH, shapePoly)) continue;
+        const d = depth(x, y);
+        if (d > deepest) deepest = d;
+      }
+    }
+    return { deepest, cover: frameCover(PW, PH) };
+  },
   tapCell,
   paintAlong,
   saveKey: SAVE_KEY,
