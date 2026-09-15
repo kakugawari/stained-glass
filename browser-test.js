@@ -117,10 +117,45 @@ async function run() {
     await phone.goto(URL);
     await phone.waitForFunction(() => window.__app);
     ok(await phone.evaluate(() => window.__app.screen()) === 'title', '開くとタイトル画面が出る');
-    ok(await phone.evaluate(() => {
-      const r = document.getElementById('start-icon').getBoundingClientRect();
-      return r.width > 80 && r.height > 80;
-    }), 'アイコンが出ている');
+    const titlePlate = await phone.evaluate(() => {
+      const p = document.getElementById('start-plate').getBoundingClientRect();
+      const room = document.getElementById('start-room');
+      return { w: Math.round(p.width), h: Math.round(p.height),
+               title: document.getElementById('start-title').textContent.trim(),
+               en: document.getElementById('start-en').textContent.trim(),
+               room: room.width > 0 && room.height > 0 };
+    });
+    ok(titlePlate.title === '硝子窓' && /^STAINED GLASS$/.test(titlePlate.en),
+      `題が額に入って出ている (${titlePlate.title} / ${titlePlate.en})`);
+    ok(titlePlate.w > 140 && titlePlate.h > 70,
+      `額が十分な大きさ (${titlePlate.w}x${titlePlate.h}px)`);
+    ok(titlePlate.room, '部屋が描かれている');
+
+    /* 掛けた窓が、題の額・そえ書き・小さなボタン・品書きにかぶらないこと。
+       木枠が「硝子棚」の字に乗ると、押せるのに押せなさそうに見える */
+    const roomOverlap = (page) => page.evaluate(() => {
+      const box = window.__app.roomBox();
+      if (!box) return [];          /* 場所が無くて掛けなかった時 */
+      const out = [];
+      for (const id of ['start-plate', 'start-sub', 'start-tools', 'start-menu']) {
+        const r = document.getElementById(id).getBoundingClientRect();
+        if (!r.width) continue;
+        const ox = Math.min(r.right, box.x + box.w) - Math.max(r.left, box.x);
+        const oy = Math.min(r.bottom, box.y + box.h) - Math.max(r.top, box.y);
+        if (ox > 0 && oy > 0) out.push(`${id} ${Math.round(ox)}x${Math.round(oy)}px`);
+      }
+      return out;
+    });
+    const over1 = await roomOverlap(phone);
+    ok(over1.length === 0, `窓が題やボタンにかぶらない (${over1.join(' / ') || 'かぶりなし'})`);
+    /* 壁を変えるとボタンの字数が変わる。そこでもかぶらないか */
+    await phone.click('#theme-toggle');
+    await phone.waitForTimeout(120);
+    const over2 = await roomOverlap(phone);
+    ok(over2.length === 0,
+      `壁を変えてもかぶらない (${over2.join(' / ') || 'かぶりなし'})`);
+    await phone.click('#theme-toggle');
+    await phone.waitForTimeout(120);
     ok(await phone.evaluate(() => document.getElementById('go-resume').hidden),
       'まっさらな時は「つづきから」を出さない');
     ok(await phone.evaluate(() => document.getElementById('bar').hidden),
@@ -170,6 +205,9 @@ async function run() {
       `塗りかけがあると「つづきから」が増えて ${withResume.n} 個になる`);
     ok(withResume.bottom <= withResume.vh,
       `6個でも、いちばん下の段が画面に収まる (${withResume.bottom}px / 画面 ${withResume.vh}px)`);
+    const overTiny = await roomOverlap(tiny);
+    ok(overTiny.length === 0,
+      `いちばん狭い画面でも窓がかぶらない (${overTiny.join(' / ') || 'かぶりなし'})`);
     await small.close();
 
     await start(phone, 'normal');
@@ -178,7 +216,7 @@ async function run() {
     const fit = await phone.evaluate(() => ({
       wide: document.documentElement.scrollWidth - document.documentElement.clientWidth,
       tall: document.documentElement.scrollHeight - document.documentElement.clientHeight,
-      title: document.getElementById('start-sub').textContent.trim()
+      title: document.getElementById('start-sub').textContent.replace(/\s+/g, '').trim()
     }));
     ok(fit.wide <= 1, 'スマホ幅で横スクロールが出ない');
     ok(fit.tall <= 1, '縦にもはみ出さない(1画面に収まる)');
@@ -402,6 +440,7 @@ async function run() {
       /* 欧文が出てよいのは2か所だけ。ここに挙がっていない英語が画面に
          出ていたら、規則から漏れている */
       const allowed = ['#frame-name .en',            /* 窓の銘の添え名 */
+                       '#start-en',                   /* 題の添え名 (額の中) */
                        '.start-btn[data-diff] .name']; /* 難易度(唯一の例外) */
       const out = [];
       const walk = (n) => {
@@ -978,6 +1017,25 @@ async function run() {
       '横向きにしても窓が画面からはみ出さない');
     ok(land.fills.filter((f) => f !== null).length === beforeTurn && beforeTurn > 0,
       `向きを変えても、嵌めた硝子が消えない (${beforeTurn} 枚)`);
+
+    /* 横向きのタイトル。縦に積んだままだと 739x430 で 459px 必要になり、
+       いちばん下の very hard が画面の外へ出ていた */
+    await phone.evaluate(() => window.__app.showTitle());
+    await phone.waitForTimeout(200);
+    const landTitle = await phone.evaluate(() => {
+      const list = [...document.querySelectorAll('.start-btn')].filter((e) => !e.hidden);
+      const last = list[list.length - 1].getBoundingClientRect();
+      const first = list[0].getBoundingClientRect();
+      return { n: list.length, bottom: Math.round(last.bottom), top: Math.round(first.top),
+               vh: window.innerHeight };
+    });
+    ok(landTitle.top >= 0 && landTitle.bottom <= landTitle.vh,
+      `横向きでも品書きが全部見える (${landTitle.n}個・${landTitle.top}〜` +
+      `${landTitle.bottom}px / 画面 ${landTitle.vh}px)`);
+    const overLand = await roomOverlap(phone);
+    ok(overLand.length === 0,
+      `横向きでも窓がかぶらない (${overLand.join(' / ') || 'かぶりなし'})`);
+
     await phone.setViewportSize({ width: 390, height: 844 });
 
     // ------------------------------------------------ アイコン
@@ -1024,7 +1082,7 @@ async function run() {
     // 元に戻したものも、1 回のリロードで戻る
     await swPage.reload();
     await swPage.waitForTimeout(400);
-    ok((await swPage.textContent('#start-sub')).trim() === '硝子を嵌めて、窓に光を灯す',
+    ok((await swPage.textContent('#start-sub')).replace(/\s+/g, '') === '硝子を嵌めて、窓に光を灯す。',
       '元に戻したものも 1 回のリロードで戻る');
 
     // つながらなくても遊べるか
