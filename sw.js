@@ -5,7 +5,7 @@
    - 絵(アイコン)は中身が変わらないのでキャッシュ優先のまま。速い。
    - オフラインでは、最後に取れたものを返す。
    ============================================================ */
-const CACHE_NAME = "stained-glass-v8";
+const CACHE_NAME = "stained-glass-v9";
 
 const ASSETS = [
   "./",
@@ -16,6 +16,7 @@ const ASSETS = [
   "./icon-512.png",
   "./icon-512-maskable.png",
   "./apple-touch-icon.png",
+  "./room.jpg",
 ];
 
 /* 中身が変わりうるもの(画面・コード・設定)。ここだけ最新を取りにいく */

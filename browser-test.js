@@ -120,34 +120,94 @@ async function run() {
     const titlePlate = await phone.evaluate(() => {
       const p = document.getElementById('start-plate').getBoundingClientRect();
       const room = document.getElementById('start-room');
+      const rr = room.getBoundingClientRect();
       return { w: Math.round(p.width), h: Math.round(p.height),
                title: document.getElementById('start-title').textContent.trim(),
                en: document.getElementById('start-en').textContent.trim(),
-               room: room.width > 0 && room.height > 0 };
+               roomSrc: room.getAttribute('src'),
+               roomNat: room.naturalWidth + 'x' + room.naturalHeight,
+               roomOk: room.complete && room.naturalWidth > 0,
+               roomFit: getComputedStyle(room).objectFit,
+               roomCovers: Math.round(rr.width) >= window.innerWidth
+                        && Math.round(rr.height) >= window.innerHeight };
     });
     ok(titlePlate.title === '硝子窓' && /^STAINED GLASS$/.test(titlePlate.en),
       `題が額に入って出ている (${titlePlate.title} / ${titlePlate.en})`);
     ok(titlePlate.w > 140 && titlePlate.h > 70,
       `額が十分な大きさ (${titlePlate.w}x${titlePlate.h}px)`);
-    ok(titlePlate.room, '部屋が描かれている');
+    ok(titlePlate.roomOk, `部屋の絵が届いている (${titlePlate.roomSrc} ${titlePlate.roomNat})`);
+    ok(titlePlate.roomFit === 'cover' && titlePlate.roomCovers,
+      '部屋の絵が画面いっぱいに切り取られている (余白が出ない)');
 
-    /* 掛けた窓が、題の額・そえ書き・小さなボタン・品書きにかぶらないこと。
-       木枠が「硝子棚」の字に乗ると、押せるのに押せなさそうに見える */
-    const roomOverlap = (page) => page.evaluate(() => {
-      const box = window.__app.roomBox();
-      if (!box) return [];          /* 場所が無くて掛けなかった時 */
-      const out = [];
-      for (const id of ['start-plate', 'start-sub', 'start-tools', 'start-menu']) {
-        const r = document.getElementById(id).getBoundingClientRect();
-        if (!r.width) continue;
-        const ox = Math.min(r.right, box.x + box.w) - Math.max(r.left, box.x);
-        const oy = Math.min(r.bottom, box.y + box.h) - Math.max(r.top, box.y);
-        if (ox > 0 && oy > 0) out.push(`${id} ${Math.round(ox)}x${Math.round(oy)}px`);
-      }
-      return out;
-    });
-    const over1 = await roomOverlap(phone);
-    ok(over1.length === 0, `窓が題やボタンにかぶらない (${over1.join(' / ') || 'かぶりなし'})`);
+    /* 絵の上に字を置くので、読めるかを実際の画素で測る。
+       札を透かしただけだった時は、窓の明るい所でコントラストが 1.40 まで
+       落ちていた (「のこり N 枚」がほとんど見えない) */
+    const titleContrast = async (page, where) => {
+      await page.waitForFunction(() => {
+        const i = document.getElementById('start-room');
+        return i && i.complete && i.naturalWidth > 0;
+      });
+      await page.waitForTimeout(250);
+      /* 字を消して、字の乗る所の「いちばん明るい地」を拾う */
+      const hide = await page.addStyleTag({ content: `.start-btn .names, .start-btn .note,
+        #start-title, #start-en, #start-sub, #shelf-open span
+        { visibility: hidden !important; }` });
+      await page.waitForTimeout(120);
+      const png = (await page.screenshot()).toString('base64');
+      const worst = await page.evaluate(async (data) => {
+        const spots = [];
+        const add = (name, el) => {
+          if (!el) return;
+          const r = el.getBoundingClientRect();
+          if (r.width > 2 && r.height > 2) spots.push({ name, r });
+        };
+        for (const el of document.querySelectorAll('.start-btn')) {
+          if (el.hidden) continue;
+          const key = el.dataset.diff || 'つづきから';
+          add(key + 'の名', el.querySelector('.names'));
+          add(key + 'の枚数', el.querySelector('.note'));
+        }
+        add('題', document.getElementById('start-title'));
+        add('欧文', document.getElementById('start-en'));
+        add('そえ書き', document.getElementById('start-sub'));
+        add('硝子棚', document.querySelector('#shelf-open span'));
+
+        const img = new Image();
+        img.src = 'data:image/png;base64,' + data;
+        await img.decode();
+        const cv = document.createElement('canvas');
+        cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+        const cx = cv.getContext('2d');
+        cx.drawImage(img, 0, 0);
+        const k = img.naturalWidth / window.innerWidth;
+        const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+        const L = (d) => 0.2126 * f(d[0]) + 0.7152 * f(d[1]) + 0.0722 * f(d[2]);
+        /* 文字の色 (--ink) と、金の色 (--gold)。どちらも使われている */
+        const INK = [215, 200, 170], GOLD = [206, 168, 96];
+        const ratio = (a, b) => {
+          const hi = Math.max(L(a), L(b)), lo = Math.min(L(a), L(b));
+          return (hi + 0.05) / (lo + 0.05);
+        };
+        let low = { n: 999 };
+        for (const s of spots) {
+          for (let i = 1; i <= 16; i++) {
+            for (let j = 1; j <= 4; j++) {
+              const px = Math.round((s.r.left + s.r.width * i / 17) * k);
+              const py = Math.round((s.r.top + s.r.height * j / 5) * k);
+              const d = cx.getImageData(px, py, 1, 1).data;
+              const n = Math.min(ratio(INK, d), ratio(GOLD, d));
+              if (n < low.n) low = { n, name: s.name, bg: [d[0], d[1], d[2]] };
+            }
+          }
+        }
+        return low;
+      }, png);
+      await hide.evaluate((el) => el.remove());
+      ok(worst.n >= 4.5,
+        `${where}: 絵の上でも字が読める (いちばん薄い所で ${worst.n.toFixed(2)} ` +
+        `— ${worst.name}・地は rgb(${worst.bg}))`);
+    };
+    await titleContrast(phone, 'iPhone 16 Plus');
     ok(await phone.evaluate(() => document.getElementById('go-resume').hidden),
       'まっさらな時は「つづきから」を出さない');
     ok(await phone.evaluate(() => document.getElementById('bar').hidden),
@@ -197,9 +257,7 @@ async function run() {
       `塗りかけがあると「つづきから」が増えて ${withResume.n} 個になる`);
     ok(withResume.bottom <= withResume.vh,
       `6個でも、いちばん下の段が画面に収まる (${withResume.bottom}px / 画面 ${withResume.vh}px)`);
-    const overTiny = await roomOverlap(tiny);
-    ok(overTiny.length === 0,
-      `いちばん狭い画面でも窓がかぶらない (${overTiny.join(' / ') || 'かぶりなし'})`);
+    await titleContrast(tiny, 'iPhone SE');
     await small.close();
 
     await start(phone, 'normal');
@@ -1022,9 +1080,6 @@ async function run() {
     ok(landTitle.top >= 0 && landTitle.bottom <= landTitle.vh,
       `横向きでも品書きが全部見える (${landTitle.n}個・${landTitle.top}〜` +
       `${landTitle.bottom}px / 画面 ${landTitle.vh}px)`);
-    const overLand = await roomOverlap(phone);
-    ok(overLand.length === 0,
-      `横向きでも窓がかぶらない (${overLand.join(' / ') || 'かぶりなし'})`);
 
     await phone.setViewportSize({ width: 390, height: 844 });
 
@@ -1040,6 +1095,13 @@ async function run() {
     ok(res.ok(), `${apple} が配信される`);
     const manifest = await (await desk.request.get(URL + 'manifest.json')).json();
     ok(manifest.icons.every((i) => i.type === 'image/png'), 'manifest のアイコンも PNG');
+    /* 部屋の絵。配信されること、重すぎないこと、オフラインぶんに入っていること */
+    const room = await desk.request.get(URL + 'room.jpg');
+    const roomKB = Math.round((await room.body()).length / 1024);
+    ok(room.ok() && roomKB < 400, `room.jpg が配信される (${roomKB} KB)`);
+    const swSrc = await (await desk.request.get(URL + 'sw.js')).text();
+    ok(swSrc.includes('"./room.jpg"'),
+      '部屋の絵がオフラインぶんのキャッシュに入っている');
 
     // ------------------------------------------------ 更新とオフライン
     section('更新とオフライン');

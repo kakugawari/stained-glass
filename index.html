@@ -50,7 +50,21 @@
   }
   #start[hidden] { display: none; }   /* ID 指定は [hidden] より強いので、必ず書く */
   #start.fading { opacity: 0; pointer-events: none; }
-  #start-room { position: absolute; inset: 0; width: 100%; height: 100%; }
+  /* 部屋の絵。画面いっぱいに切り取って敷く。
+     窓は絵の右手にあるので、狭い画面ではそちらを残すように寄せる */
+  #start-room {
+    position: absolute; inset: 0; width: 100%; height: 100%;
+    object-fit: cover; object-position: 62% 34%;
+  }
+  /* 絵の上に薄い暗幕。これが無いと、床の光だまりの上で品書きの字が読めない */
+  #start-veil {
+    position: absolute; inset: 0; pointer-events: none;
+    background:
+      radial-gradient(78% 42% at 50% 20%, rgba(12,9,7,0.58), rgba(12,9,7,0) 72%),
+      linear-gradient(to bottom,
+        rgba(12,9,7,0.46) 0%, rgba(12,9,7,0.18) 26%,
+        rgba(12,9,7,0.62) 58%, rgba(9,7,5,0.86) 100%);
+  }
   #start-fore {
     position: relative; z-index: 1;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -70,7 +84,7 @@
     border: 1px solid rgba(var(--gold),0.55);
     border-radius: 4px 4px 22px 22px / 4px 4px 14px 14px;
     background: linear-gradient(to bottom,
-      rgba(var(--panel),0.50), rgba(var(--panel),0.24));
+      rgba(var(--panel),0.86), rgba(var(--panel),0.68));
     box-shadow: 0 0 26px rgba(var(--gold),0.14), inset 0 0 22px rgba(0,0,0,0.30);
     text-align: center;
   }
@@ -109,7 +123,7 @@
     color: rgba(var(--ink),0.88);
     border: 1px solid rgba(var(--gold),0.42);
     border-radius: 3px;
-    background: rgba(var(--panel),0.34);
+    background: rgba(var(--panel),0.70);
   }
   #start-tools .btn svg { flex: 0 0 auto; }
 
@@ -133,8 +147,12 @@
     color: rgba(var(--ink),0.95);
     border: 1px solid rgba(var(--gold),0.45);
     border-radius: 6px;
-    background: linear-gradient(to bottom,
-      rgba(var(--tier,120,120,120),0.30), rgba(var(--tier,120,120,120),0.14));
+    /* 絵の上に置くので、まず暗い下地。そこへ段の色を重ねる。
+       透かしただけだと、窓の明るい所で字が飛ぶ (コントラスト 1.01 まで落ちた) */
+    background:
+      linear-gradient(to bottom,
+        rgba(var(--tier,120,120,120),0.30), rgba(var(--tier,120,120,120),0.14)),
+      linear-gradient(to bottom, rgba(13,10,7,0.92), rgba(13,10,7,0.86));
     font-family: inherit; cursor: pointer;
     box-shadow: inset 0 1px 0 rgba(255,255,255,0.06), 0 2px 8px rgba(0,0,0,0.28);
     transition: transform 0.12s ease, box-shadow 0.12s ease;
@@ -494,7 +512,8 @@
 </div>
 
 <div id="start">
-  <canvas id="start-room"></canvas>
+  <img id="start-room" src="./room.jpg" alt="" decoding="async" fetchpriority="high">
+  <div id="start-veil"></div>
   <div id="start-fore">
    <div id="start-left">
     <div id="start-plate">
@@ -745,7 +764,7 @@ function resize() {
   layoutSwatches();     /* 帯の高さは丸の並べ方で決まる。窓を組む前に決める */
   barBox = null;        /* 画面の大きさが変われば、操作帯も測り直す */
   layoutPanel();
-  if (startMenuEl) { paintRosettes(); if (atTitle) paintRoom(); }
+  if (startMenuEl) paintRosettes();
   refreshHosts();
   redrawGlass();
 }
@@ -1064,10 +1083,8 @@ function showTitle() {
   const canResume = cells.length > 0 && !completed && fills.some(f => f !== null);
   resumeEl.hidden = !canResume;
   if (canResume) resumeNoteEl.textContent = `のこり ${left} 枚`;
-  newRoomWindow();          /* 開くたびに違う窓を掛ける */
   startEl.hidden = false;
   startEl.classList.remove("fading");
-  paintRoom();              /* 出してから描く。隠れたままでは前景の幅が測れない */
   barEl2.hidden = true;
   toTitleEl.hidden = true;
   remainEl.classList.add("hidden");
@@ -1715,160 +1732,6 @@ function paintRosettes() {
   }
 }
 
-/* ------------------------------------------------------------
-   部屋を描く。板張りの壁・灯り・右手の窓・床の光だまり
-   ------------------------------------------------------------ */
-const roomCv = document.getElementById("start-room");
-const plateEl = document.getElementById("start-plate");
-const subEl   = document.getElementById("start-sub");
-const toolsEl = document.getElementById("start-tools");
-let roomWin = null;          /* タイトルに掛ける窓。開くたびに引き直す */
-let roomBox = null;          /* いま掛かっている窓の場所 (木枠こみ) */
-
-function newRoomWindow() {
-  const shape = WINDOW_SHAPES.find(s => s.key === "gothic");
-  const PW = 240, PH = PW / shape.ratio;
-  const cells = makeWindow({ diff: "hard", shapePoly: shape.poly(), symmetric: true,
-    panelW: PW, panelH: PH, border: true, curve: true, curveChance: 0.6, curveBow: 0.13 });
-  /* 淡い色を主に、ときどき濃い色を差す(逆光で透ける硝子の見え方) */
-  /* 逆光で透ける硝子。濃い色を地にして、淡い色を散らす。
-     淡い色ばかりだと、洗いざらしたように見えてしまう */
-  const deep = ["#1440c8", "#0d2a8f", "#c1123a", "#8f0f2e", "#0f9d58", "#0a6e3d",
-                "#6a3fb5", "#158fa8", "#2b3f9e", "#0b6b4f"];
-  const mid  = ["#e6a417", "#c87a1e", "#d4548a", "#7ab648", "#3ab8cf", "#8f63d6"];
-  const soft = ["#cfd9e8", "#ffe08a", "#c0e896", "#c4c4ec"];
-  const pick = (a) => a[(Math.random() * a.length) | 0];
-  roomWin = { shape, cells, fills: cells.map(() => {
-    const r = Math.random();
-    return r < 0.52 ? pick(deep) : r < 0.83 ? pick(mid) : pick(soft);
-  }) };
-}
-
-/* 窓の高さに重なっている前景の、いちばん右。
-   窓がここへかぶると、木枠が「硝子棚」の字に乗ってしまう。
-   縦に並ぶ物は高さがばらばらなので、重なっている物だけを見る
-   (縦向きでは品書きは窓より下、横向きでは真横に来る) */
-function foreRight(y0, y1) {
-  let x = 0;
-  for (const el of [plateEl, subEl, toolsEl, startMenuEl]) {
-    if (!el) continue;
-    const r = el.getBoundingClientRect();
-    if (!r.width || r.bottom <= y0 || r.top >= y1) continue;
-    x = Math.max(x, r.right);
-  }
-  return x;
-}
-
-/* 床の光だまり・灯り・四隅の暗み。窓を掛けられない時もここは描く */
-function paintRoomLight(c, w, h) {
-  c.save();
-  c.globalCompositeOperation = "lighter";
-  const pool = c.createRadialGradient(w * 0.72, h * 0.86, 10, w * 0.72, h * 0.86, w * 0.58);
-  pool.addColorStop(0, "rgba(255,214,140,0.16)");
-  pool.addColorStop(1, "rgba(255,214,140,0)");
-  c.fillStyle = pool; c.fillRect(0, h * 0.55, w, h * 0.45);
-  c.restore();
-
-  const lamp = c.createRadialGradient(w * 0.13, h * 0.09, 4, w * 0.13, h * 0.09, w * 0.45);
-  lamp.addColorStop(0, "rgba(255,208,130,0.16)");
-  lamp.addColorStop(1, "rgba(255,208,130,0)");
-  c.fillStyle = lamp; c.fillRect(0, 0, w, h);
-
-  /* 四隅を落として、部屋の奥行きを出す */
-  const vig = c.createRadialGradient(w * 0.5, h * 0.42, Math.min(w, h) * 0.30,
-                                     w * 0.5, h * 0.5, Math.max(w, h) * 0.78);
-  vig.addColorStop(0, "rgba(0,0,0,0)");
-  vig.addColorStop(1, "rgba(0,0,0,0.62)");
-  c.fillStyle = vig; c.fillRect(0, 0, w, h);
-}
-
-function paintRoom() {
-  if (!roomWin) newRoomWindow();
-  const w = W, h = H;
-  if (!w || !h) return;
-  const dpr = Math.min(window.devicePixelRatio || 1, 2);
-  roomCv.width = w * dpr; roomCv.height = h * dpr;
-  roomCv.style.width = w + "px"; roomCv.style.height = h + "px";
-  const c = roomCv.getContext("2d");
-  c.setTransform(dpr, 0, 0, dpr, 0, 0);
-  /* 壁 */
-  const bg = c.createLinearGradient(0, 0, 0, h);
-  bg.addColorStop(0, theme.wall[0]);
-  bg.addColorStop(0.6, theme.wall[1]);
-  bg.addColorStop(1, theme.wall[2]);
-  c.fillStyle = bg; c.fillRect(0, 0, w, h);
-
-  /* 腰板の横目地。部屋らしさは、この一本ずつの線で出る */
-  c.strokeStyle = "rgba(255,225,180,0.045)";
-  c.lineWidth = 1;
-  for (let y = h * 0.62; y < h; y += 26) {
-    c.beginPath(); c.moveTo(0, Math.round(y) + 0.5); c.lineTo(w, Math.round(y) + 0.5); c.stroke();
-  }
-  c.strokeStyle = "rgba(255,225,180,0.08)";
-  c.lineWidth = 2;
-  c.beginPath(); c.moveTo(0, Math.round(h * 0.62) + 0.5);
-  c.lineTo(w, Math.round(h * 0.62) + 0.5); c.stroke();
-
-  /* 右手の窓。画面の外へ半分はみ出させて、部屋の続きを感じさせる。
-     ただし前景には、木枠ごとかぶらせない。窓を縮めると重なる相手も
-     変わるので、落ち着くまで数回くり返す */
-  const bOf = (s) => Math.max(7, s * 0.045);
-  /* 大きい画面でも 340px まで。青天井にすると硝子1枚が拳ほどになり、
-     窓ではなく色の塊に見える */
-  let ww = Math.min(340, Math.max(150, w * 0.50)), b = bOf(ww), wh = 0, wx = 0, wy = 0;
-  for (let pass = 0; pass < 4; pass++) {
-    b = bOf(ww); wh = ww / roomWin.shape.ratio; wy = -wh * 0.20;
-    wx = w - ww * 0.52;
-    const clear = foreRight(wy - b, wy + wh + b) + 10;
-    if (clear <= 0) break;
-    if (wx - b >= clear) break;
-    wx = clear + b;
-    if (w - wx >= ww * 0.30) break;          /* 細い帯にはなっていない */
-    const next = Math.max(110, (w - clear) / 0.345);
-    if (Math.abs(next - ww) < 1) break;
-    ww = next;
-  }
-  /* どうしても場所が無いなら、窓は掛けない。数 px の帯は染みにしか見えない */
-  roomBox = (w - (wx - b) < 24) ? null
-          : { x: wx - b, y: wy - b, w: ww + b * 2, h: wh + b * 2 };
-  if (!roomBox) { paintRoomLight(c, w, h); return; }
-
-  const poly = roomWin.shape.poly();
-  const px = (u) => wx + u * ww, py = (v) => wy + v * wh;
-  const path = () => {
-    c.beginPath(); c.moveTo(px(poly[0][0]), py(poly[0][1]));
-    for (let i = 1; i < poly.length; i++) c.lineTo(px(poly[i][0]), py(poly[i][1]));
-    c.closePath();
-  };
-  const halo = c.createRadialGradient(wx + ww * 0.4, wy + wh * 0.4, ww * 0.1,
-                                      wx + ww * 0.4, wy + wh * 0.4, ww * 1.5);
-  halo.addColorStop(0, "rgba(255,226,166,0.20)");
-  halo.addColorStop(0.5, "rgba(226,178,96,0.07)");
-  halo.addColorStop(1, "rgba(200,150,70,0)");
-  c.fillStyle = halo; c.fillRect(0, 0, w, h);
-
-  c.save(); path(); c.clip();
-  paintGlass(c, roomWin.cells, roomWin.fills, { x: wx, y: wy, w: ww, h: wh },
-             Math.max(1, ww / 150));
-  /* 逆光。硝子の向こうは外なので、全体に光を重ねる */
-  c.globalCompositeOperation = "lighter";
-  const back = c.createLinearGradient(wx, wy, wx, wy + wh);
-  back.addColorStop(0, "rgba(255,238,200,0.30)");
-  back.addColorStop(1, "rgba(255,220,160,0.10)");
-  c.fillStyle = back; c.fillRect(wx, wy, ww, wh);
-  c.restore();
-
-  /* 窓の木枠 */
-  path();
-  const wood = curFrame().wood;
-  const wg = c.createLinearGradient(wx, wy, wx + ww, wy + wh);
-  wg.addColorStop(0, wood[0]); wg.addColorStop(0.5, wood[1]); wg.addColorStop(1, wood[2]);
-  c.strokeStyle = wg; c.lineWidth = b * 2; c.lineJoin = "round"; c.stroke();
-  c.strokeStyle = "rgba(255,235,200,0.14)"; c.lineWidth = 2; c.stroke();
-
-  paintRoomLight(c, w, h);
-}
-
 /* ============================================================
    起動:タイトル画面から。前の窓は読み込んでおき、
    塗りかけなら「つづきから」を出す
@@ -2098,8 +1961,6 @@ window.__app = {
   newWindow,
   /* いまどちらの画面か / 画面を移る(テストから) */
   screen: () => (atTitle ? "title" : "play"),
-  /* タイトルに掛けた窓の場所 (木枠のはみ出しこみ)。かぶりを測るのに使う */
-  roomBox: () => (roomBox ? { ...roomBox } : null),
   showTitle: () => showTitle(),
   enterPlay: () => enterPlay(),
   /* 見比べ用: 決まった枠をそのまま出す */
