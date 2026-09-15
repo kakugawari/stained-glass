@@ -1002,7 +1002,9 @@ function restoreSaved() {
   glints.length = 0;
   refreshHosts();
 
-  familyIdx = win.familyIdx;
+  /* しまってあった色が、まだ棚に無いことはありうる (記録が壊れた時など) */
+  familyIdx = unlockedColors(cleared).includes(COLOR_FAMILIES[win.familyIdx])
+    ? win.familyIdx : familyIdx;
   for (let i = 0; i < swatchesEl.children.length; i++) {
     swatchesEl.children[i].classList.toggle("active", i === familyIdx);
   }
@@ -2062,10 +2064,14 @@ document.getElementById("shelf-close").addEventListener("click", () => {
 const unlockEl = document.getElementById("unlock");
 let unlockTimer = null;
 
-restoreSaved();
-rebuildSwatches();   /* 帯の高さは中身で決まる。窓を組む前に並べておく */
+/* 並べる → 測る → しまってある窓を戻す、の順。
+   帯の高さは中の丸で決まり、窓の高さは帯の高さで決まる。
+   空の帯のまま窓を戻すと、板が本当より高く出て、かけらの預け先が変わる。
+   預け先が変わると、嵌めてある硝子が隣へ写って広がってしまう */
+rebuildSwatches();
 buildMenu();
 resize();
+restoreSaved();
 paintRosettes();
 showTitle();
 requestAnimationFrame(frame);

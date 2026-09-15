@@ -829,6 +829,14 @@ async function run() {
     ok(sameShape && worstGap < 1e-4,
       `窓の割り方もそのまま戻る (ずれ ${(worstGap * 100).toFixed(4)}% 以内)`);
     ok(back.remain === kept.remain, `のこり枚数もそのまま (${back.remain})`);
+    /* 嵌めた硝子が、開き直した拍子に隣へ写って増えていないか。
+       帯を並べる前に窓を戻していた頃は、板が本当より高く出て、
+       かけらの預け先が変わり、5枚が21枚に広がることがあった */
+    ok(back.fills.filter((f) => f !== null).length === keptFilled,
+      `開き直しても、嵌めた硝子が増えも減りもしない ` +
+      `(${keptFilled} 枚 → ${back.fills.filter((f) => f !== null).length} 枚)`);
+    ok(JSON.stringify(back.hosts) === JSON.stringify(kept.hosts),
+      'かけらの預け先も、開き直す前と同じ');
 
     // もどる → タイトル
     await phone.locator('#to-title').tap();
