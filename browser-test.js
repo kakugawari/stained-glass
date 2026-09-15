@@ -1405,12 +1405,27 @@ async function run() {
     await desk.goto(URL);
     const apple = await desk.evaluate(() =>
       document.querySelector('link[rel="apple-touch-icon"]')?.getAttribute('href'));
-    // iOS は SVG のアイコンを使えない
+    // iOS は SVG のアイコンを使えない。ホーム画面が見るのはここ
     ok(apple && apple.endsWith('.png'), `ホーム画面用アイコンが PNG (${apple})`);
     const res = await desk.request.get(URL + apple.replace('./', ''));
     ok(res.ok(), `${apple} が配信される`);
     const manifest = await (await desk.request.get(URL + 'manifest.json')).json();
-    ok(manifest.icons.every((i) => i.type === 'image/png'), 'manifest のアイコンも PNG');
+    /* manifest のほうは JPEG でもよい (透かす所が無いので)。
+       だめなのは SVG と、読めない形 */
+    ok(manifest.icons.every((i) => i.type === 'image/png' || i.type === 'image/jpeg'),
+      `manifest のアイコンは PNG か JPEG (${manifest.icons.map((i) => i.type).join(' / ')})`);
+    /* アイコンは Service Worker が先読みするので、重さがそのまま
+       初回の待ち時間になる。地が写真なので、目を離すとすぐ膨らむ */
+    let iconKB = 0;
+    for (const src of [apple.replace('./', ''), ...manifest.icons.map((i) => i.src)]) {
+      const r = await desk.request.get(URL + src);
+      if (!r.ok()) { iconKB = 1e9; break; }
+      iconKB += (await r.body()).length / 1024;
+    }
+    ok(iconKB < 320, `アイコン一式が軽い (合わせて ${Math.round(iconKB)} KB)`);
+    const swIcons = await (await desk.request.get(URL + 'sw.js')).text();
+    ok(manifest.icons.every((i) => swIcons.includes('"./' + i.src + '"')),
+      'manifest のアイコンが、オフラインぶんのキャッシュとそろっている');
     /* 部屋の絵。配信されること、重すぎないこと、オフラインぶんに入っていること */
     const room = await desk.request.get(URL + 'room.jpg');
     const roomKB = Math.round((await room.body()).length / 1024);
