@@ -148,14 +148,6 @@ async function run() {
     });
     const over1 = await roomOverlap(phone);
     ok(over1.length === 0, `窓が題やボタンにかぶらない (${over1.join(' / ') || 'かぶりなし'})`);
-    /* 壁を変えるとボタンの字数が変わる。そこでもかぶらないか */
-    await phone.click('#theme-toggle');
-    await phone.waitForTimeout(120);
-    const over2 = await roomOverlap(phone);
-    ok(over2.length === 0,
-      `壁を変えてもかぶらない (${over2.join(' / ') || 'かぶりなし'})`);
-    await phone.click('#theme-toggle');
-    await phone.waitForTimeout(120);
     ok(await phone.evaluate(() => document.getElementById('go-resume').hidden),
       'まっさらな時は「つづきから」を出さない');
     ok(await phone.evaluate(() => document.getElementById('bar').hidden),
@@ -768,34 +760,24 @@ async function run() {
     });
     await phone.waitForTimeout(150);
 
-    // ------------------------------------------------ 壁の色
-    section('壁の色');
+    // ------------------------------------------------ 壁
+    section('壁');
     await phone.locator('#to-title').tap();
     await phone.waitForTimeout(150);
-    const wallOf = () => phone.evaluate(() => {
-      const cv = document.getElementById('cv');
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const d = cv.getContext('2d').getImageData(4, 4, 1, 1).data;
+    const wall = await phone.evaluate(() => {
+      const d = document.getElementById('cv').getContext('2d')
+        .getImageData(4, 4, 1, 1).data;
       return [d[0], d[1], d[2]];
     });
-    ok(await phone.evaluate(() => window.__app.theme()) === 'night', '最初は暗い部屋');
-    const nightWall = await wallOf();
-    await phone.locator('#theme-toggle').tap();
-    await phone.waitForTimeout(200);
-    const dayWall = await wallOf();
-    ok(await phone.evaluate(() => window.__app.theme()) === 'day' &&
-       dayWall[0] + dayWall[1] + dayWall[2] > nightWall[0] + nightWall[1] + nightWall[2] + 200,
-      `押すと白い壁になる (rgb(${nightWall}) → rgb(${dayWall}))`);
-    await phone.reload();
-    await phone.waitForFunction(() => window.__app);
-    ok(await phone.evaluate(() => window.__app.theme()) === 'day', '選んだ壁は覚えている');
-    await phone.locator('#theme-toggle').tap();
-    await phone.waitForTimeout(200);
-    ok(await phone.evaluate(() => window.__app.theme()) === 'night', '暗い部屋に戻せる');
-    /* 画面の上の色 (iOS のステータスバーの地) も、壁と一緒に変わる */
+    ok(wall[0] + wall[1] + wall[2] < 180,
+      `壁は薄暗い洋館ひとつ (rgb(${wall}))`);
+    /* 白い壁の版はやめたので、切り替えるボタンも無い */
+    ok(await phone.evaluate(() => !document.getElementById('theme-toggle')),
+      '壁を切り替えるボタンは無い');
+    /* 画面の上の色 (iOS のステータスバーの地) も壁にそろえる */
     ok(await phone.evaluate(() =>
       document.querySelector('meta[name="theme-color"]').content.toLowerCase()) === '#14110e',
-      '画面の上の色も暗い部屋にそろう');
+      '画面の上の色も壁にそろう');
     await phone.locator('#go-resume').tap();
     await phone.waitForTimeout(250);
 
