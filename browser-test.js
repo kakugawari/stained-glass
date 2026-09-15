@@ -220,6 +220,96 @@ async function run() {
     };
     const titleContrast = (page, where) => readContrast(page, where, HIDE_TITLE, 4.5);
     await titleContrast(phone, 'iPhone 16 Plus');
+
+    /* ------------------------------------------------------------
+       品書きの札 —— 金の縁・隅飾り・端の金具・枚数の菱形
+       ------------------------------------------------------------
+       札は clip-path の多角形と SVG の背景でできている。data URI の
+       書き損じ (# を %23 にし忘れる等) や clip-path の書き間違いは
+       「黙って何も出ない」形で壊れるので、実際の画素で確かめる。
+       枚数は、菱形の外へ逃げたことが実際にあった (baseline でそろえて
+       いたので字が上へ張り付いた。狭い画面では菱形からはみ出した)
+       ------------------------------------------------------------ */
+    const plaque = await (async () => {
+      const png = (await phone.screenshot()).toString('base64');
+      return phone.evaluate(async (data) => {
+        const img = new Image();
+        img.src = 'data:image/png;base64,' + data;
+        await img.decode();
+        const cv = document.createElement('canvas');
+        cv.width = img.naturalWidth; cv.height = img.naturalHeight;
+        const cx = cv.getContext('2d');
+        cx.drawImage(img, 0, 0);
+        const k = img.naturalWidth / window.innerWidth;
+        const lum = (d) => 0.2126 * d[0] + 0.7152 * d[1] + 0.0722 * d[2];
+        const at = (x, y) => lum(cx.getImageData(Math.round(x * k), Math.round(y * k), 1, 1).data);
+        /* 飾りは細い線なので、箱の中でいちばん明るい所を採る */
+        const brightest = (r) => {
+          let hi = 0;
+          for (let i = 1; i <= 6; i++) for (let j = 1; j <= 6; j++) {
+            hi = Math.max(hi, at(r.left + r.width * i / 7, r.top + r.height * j / 7));
+          }
+          return hi;
+        };
+        const out = { n: 0, rule: 0, sprig: 0, finial: 0, centred: 0, fits: 0,
+                      worstRule: 999, worstSprig: 999, worstOff: 0, worstSlack: 0 };
+        for (const el of document.querySelectorAll('.start-btn[data-diff]')) {
+          const plate = el.querySelector('.plate').getBoundingClientRect();
+          const inner = el.querySelector('.inner').getBoundingClientRect();
+          const orn = el.querySelector('.orn.o1').getBoundingClientRect();
+          const caps = el.querySelector('.caps').getBoundingClientRect();
+          const note = el.querySelector('.note').getBoundingClientRect();
+          const num = el.querySelector('.note .num').getBoundingClientRect();
+          out.n++;
+          /* 地は右のあいた所 (薔薇窓と字を避ける) で測る。地は上下で濃さが
+             変わるので、**比べる相手と同じ高さ**で拾う —— 高さがずれていると、
+             飾りが消えても「地より明るい」が成り立ってしまう */
+          const fieldAt = (y) => at(inner.left + inner.width * 0.62, y);
+          const field = fieldAt(inner.top + inner.height * 0.5);
+          const rule = at(plate.left + plate.width * 0.62, plate.top + 1.2);
+          if (rule > field + 25) out.rule++;
+          out.worstRule = Math.min(out.worstRule, Math.round(rule - field));
+          /* 隅飾りは札の角にあるので、箱の外半分には金の縁と面取りの線が
+             入り込む。飾りだけを見るために、内側の半分だけを拾う */
+          const sp = brightest({ left: orn.left + orn.width * 0.5, top: orn.top + orn.height * 0.5,
+                                 width: orn.width * 0.5, height: orn.height * 0.5 });
+          const near = fieldAt(orn.top + orn.height * 0.75);
+          if (sp > near + 14) out.sprig++;
+          out.worstSprig = Math.min(out.worstSprig, Math.round(sp - near));
+          /* 端の金具は札の外、左のふち */
+          const fin = brightest({ left: caps.left, top: caps.top + caps.height * 0.25,
+                                  width: 12, height: caps.height * 0.5 });
+          if (fin > field + 14) out.finial++;
+          /* 枚数は菱形のまんなかに、はみ出さずに収まっているか */
+          const off = Math.abs((num.top + num.bottom) / 2 - (note.top + note.bottom) / 2);
+          if (off <= 2) out.centred++;
+          out.worstOff = Math.max(out.worstOff, Math.round(off * 10) / 10);
+          /* 菱形は SVG (viewBox 54x46・path は 2.4〜51.6 / 2.4〜43.6) を
+             箱いっぱいに引き伸ばしたもの。字が菱形の中に収まっているか、
+             |dx|/(W/2) + |dy|/(H/2) <= 1 で見る。字の四隅は余白なので、
+             高さは半分だけ数える (そうしないと、参考の絵でも落ちる) */
+          const W = note.width * 49.2 / 54, H = note.height * 41.2 / 46;
+          const fill = (num.width / 2) / (W / 2) + (num.height / 4) / (H / 2);
+          if (fill <= 1) out.fits++;
+          out.worstSlack = Math.max(out.worstSlack, Math.round(fill * 100) / 100);
+        }
+        return out;
+      }, png);
+    })();
+    ok(plaque.n === 5 && plaque.rule === plaque.n,
+      `札に金の縁が回っている (${plaque.rule}/${plaque.n}・` +
+      `いちばん薄い札で地より ${plaque.worstRule} 明るい)`);
+    ok(plaque.sprig === plaque.n && plaque.finial === plaque.n,
+      `四隅の飾りと端の金具が出ている (隅 ${plaque.sprig}/${plaque.n}・` +
+      `端 ${plaque.finial}/${plaque.n}・隅のいちばん薄い所で +${plaque.worstSprig})`);
+    ok(plaque.centred === plaque.n && plaque.fits === plaque.n,
+      `枚数が菱形のまんなかに収まる (ずれ 最大 ${plaque.worstOff}px・` +
+      `いちばん詰まった札で菱形の ${Math.round(plaque.worstSlack * 100)}% まで)`);
+    ok(await phone.evaluate(() =>
+      [...document.querySelectorAll('.start-btn')].every((el) =>
+        el.querySelector('.plate') && el.querySelector('.inner') &&
+        el.querySelectorAll('.orn').length === 4 && el.querySelector('.caps'))),
+      '「つづきから」にも同じ札の飾りが付く');
     ok(await phone.evaluate(() => document.getElementById('go-resume').hidden),
       'まっさらな時は「つづきから」を出さない');
     ok(await phone.evaluate(() => document.getElementById('bar').hidden),
@@ -261,6 +351,18 @@ async function run() {
       `どの段も画面に収まる (いちばん下は ${Math.round(btns[4].bottom)}px / 画面 ${btns[0].vh}px)`);
     ok(btns.every((b) => b.h >= 40),
       `どの段も指で押せる高さ (${Math.round(Math.min(...btns.map((b) => b.h)))}px)`);
+    /* 詰めた札でも、枚数が菱形からはみ出さないか。
+       「140枚」がいちばん長い。菱形を contain で収めていた頃は、
+       背の低い画面で菱形だけ痩せて、字が外へ出ていた */
+    const tinyFit = await tiny.evaluate(() =>
+      Math.max(...[...document.querySelectorAll('.start-btn[data-diff] .note')].map((el) => {
+        const note = el.getBoundingClientRect();
+        const num = el.querySelector('.num').getBoundingClientRect();
+        const W = note.width * 49.2 / 54, H = note.height * 41.2 / 46;
+        return (num.width / 2) / (W / 2) + (num.height / 4) / (H / 2);
+      })));
+    ok(tinyFit <= 1,
+      `詰めた札でも枚数が菱形に収まる (いちばん詰まった所で ${Math.round(tinyFit * 100)}%)`);
     ok(await tiny.evaluate(() =>
       document.documentElement.scrollHeight - document.documentElement.clientHeight <= 1),
       '小さい画面でもタイトルが縦にはみ出さない');
