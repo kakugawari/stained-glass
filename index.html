@@ -36,6 +36,32 @@
   }
   canvas { display: block; }
 
+  /* ===== 部屋の絵 =====
+     タイトルも遊ぶ画面も、地はこの一枚。画面いっぱいに切り取る。
+     窓が絵の右手にあるので、狭い画面ではそちらを残すように寄せる */
+  #room {
+    position: fixed; inset: 0; width: 100%; height: 100%;
+    object-fit: cover; object-position: 62% 34%;
+    z-index: 0;
+  }
+  /* 絵の上の薄い暗幕。遊ぶ画面では濃くして、硝子窓のほうを立てる */
+  #room-veil {
+    position: fixed; inset: 0; z-index: 0; pointer-events: none;
+    transition: opacity 0.5s ease;
+    background:
+      radial-gradient(78% 42% at 50% 20%, rgba(12,9,7,0.58), rgba(12,9,7,0) 72%),
+      linear-gradient(to bottom,
+        rgba(12,9,7,0.46) 0%, rgba(12,9,7,0.18) 26%,
+        rgba(12,9,7,0.62) 58%, rgba(9,7,5,0.86) 100%);
+  }
+  /* 遊ぶ画面。部屋を沈めて、硝子だけが光っているようにする */
+  #room-veil.playing {
+    background:
+      radial-gradient(64% 42% at 50% 44%, rgba(10,8,6,0.46), rgba(10,8,6,0.16) 72%),
+      linear-gradient(to bottom, rgba(10,8,6,0.30), rgba(8,6,5,0.52));
+  }
+  #cv { position: fixed; inset: 0; z-index: 1; }
+
   /* ===== タイトル画面 =====
      参考にした絵の作り —— 洋館の一室を背に、額に入った題、
      その下に硝子の飾りを付けた品書き。部屋 (壁・窓・灯り・光だまり) は
@@ -52,19 +78,6 @@
   #start.fading { opacity: 0; pointer-events: none; }
   /* 部屋の絵。画面いっぱいに切り取って敷く。
      窓は絵の右手にあるので、狭い画面ではそちらを残すように寄せる */
-  #start-room {
-    position: absolute; inset: 0; width: 100%; height: 100%;
-    object-fit: cover; object-position: 62% 34%;
-  }
-  /* 絵の上に薄い暗幕。これが無いと、床の光だまりの上で品書きの字が読めない */
-  #start-veil {
-    position: absolute; inset: 0; pointer-events: none;
-    background:
-      radial-gradient(78% 42% at 50% 20%, rgba(12,9,7,0.58), rgba(12,9,7,0) 72%),
-      linear-gradient(to bottom,
-        rgba(12,9,7,0.46) 0%, rgba(12,9,7,0.18) 26%,
-        rgba(12,9,7,0.62) 58%, rgba(9,7,5,0.86) 100%);
-  }
   #start-fore {
     position: relative; z-index: 1;
     display: flex; flex-direction: column; align-items: center; justify-content: center;
@@ -336,20 +349,41 @@
     position: fixed; top: calc(8px + env(safe-area-inset-top)); left: 8px;
     width: 40px; height: 40px;
     display: flex; align-items: center; justify-content: center;
-    color: rgba(var(--ink),0.6);
-    background: none; border: none;
+    color: rgba(var(--ink),0.92);
+    /* 部屋の絵の上に置くので、うっすら地を敷く。
+       洋燈の真下に来ると、地なしでは矢印が読めなかった (1.0 まで落ちた) */
+    background: radial-gradient(circle at 50% 50%,
+                rgba(10,8,6,0.82) 0%, rgba(10,8,6,0.62) 52%, rgba(10,8,6,0) 74%);
+    border: none;
     font-size: 20px; line-height: 1;
     cursor: pointer; z-index: 3;
   }
   #to-title[hidden] { display: none; }
   #to-title:active { color: rgba(var(--accent),1); }
 
-  /* ===== 枠の名前(上にふわっと出る) ===== */
+  /* ===== 遊ぶ画面の見出し =====
+     金の罫に硝子の蓮を挟み、その下ひとところに
+     「窓の銘」(引いた直後) と「のこり枚数」(ふだん) を重ねて出す。
+     同じ場所で入れ替わるので、ぶつかりようがない */
+  #hud {
+    position: fixed; z-index: 3; pointer-events: none;
+    top: calc(6px + env(safe-area-inset-top));
+    left: 50%; transform: translateX(-50%);
+    width: min(240px, 68vw);
+    text-align: center;
+  }
+  #hud[hidden] { display: none; }
+  #hud-rule { display: block; width: 100%; height: auto; }
+  #hud-line { position: relative; height: 34px; margin-top: 3px; }
+  #hud-line > * {
+    position: absolute; left: 50%; top: 0;
+    transform: translateX(-50%);
+    white-space: nowrap;
+  }
+
   /* 窓の銘。大正の商標ラベルと同じ組み方 ——
      漢字の銘を大きく、その下に字間をあけた小さな欧文を添える */
   #frame-name {
-    position: fixed; top: 10px; left: 50%;
-    transform: translateX(-50%);
     text-align: center; line-height: 1.2;
     color: rgba(var(--ink),0.88);
     pointer-events: none;
@@ -369,15 +403,17 @@
   }
   #frame-name.show { opacity: 1; }
 
-  /* ===== のこり枚数(右上に控えめに) ===== */
+  /* ===== のこり枚数(見出しの下) ===== */
   #remain {
-    position: fixed; top: 18px; right: 16px;
-    color: rgba(var(--ink-soft),0.7);
-    font-size: 12px; letter-spacing: 0.2em;
+    color: rgba(var(--ink),0.88);
+    font-size: 14px; letter-spacing: 0.24em; text-indent: 0.24em;
+    line-height: 1.5;
     pointer-events: none;
     transition: opacity 0.6s ease;
   }
   #remain.hidden { opacity: 0; }
+  /* 銘が出ているあいだは、のこり枚数を引っこめる */
+  #hud.naming #remain { opacity: 0; }
 
   /* ===== 下部の操作帯(色を選ぶ) =====
      丸は指で押せる大きさに。見た目の丸は 34px、押せる所は 44px
@@ -385,6 +421,7 @@
      通り道なので、そこから離して置く */
   #bar {
     position: fixed; bottom: 0; left: 0; right: 0;
+    z-index: 3;          /* canvas (z-index:1) より上。下だと丸が押せない */
     display: flex; flex-direction: column; align-items: center;
     gap: 9px;
     padding: 8px 0 calc(18px + env(safe-area-inset-bottom));
@@ -480,8 +517,40 @@
 </head>
 <body>
 
+<!-- 部屋の絵。タイトルでも遊ぶ画面でも、同じ一枚を敷く -->
+<img id="room" src="./room.jpg" alt="" decoding="async" fetchpriority="high">
+<div id="room-veil"></div>
+
 <canvas id="cv"></canvas>
-<div id="frame-name"><span class="jp"></span><span class="en"></span></div>
+
+<!-- 遊ぶ画面の見出し。金の罫に硝子の蓮を挟み、その下に
+     窓の銘 (引いた直後) か、のこり枚数 (ふだん) を出す -->
+<div id="hud" hidden>
+  <svg id="hud-rule" viewBox="0 0 240 26" aria-hidden="true">
+    <g stroke="rgba(var(--gold),0.55)" stroke-width="1" fill="none">
+      <path d="M4 14 H96"/><path d="M144 14 H236"/>
+      <path d="M100 14 l3.5 -3 v6 z" fill="rgba(var(--gold),0.55)" stroke="none"/>
+      <path d="M140 14 l-3.5 -3 v6 z" fill="rgba(var(--gold),0.55)" stroke="none"/>
+    </g>
+    <g id="hud-lotus" stroke="rgba(18,15,12,0.85)" stroke-width="1" stroke-linejoin="round">
+      <path d="M120 21 C114 15 114 8 120 4 C126 8 126 15 120 21 Z"
+            fill="#d4548a" transform="rotate(-62 120 21)"/>
+      <path d="M120 21 C114 15 114 8 120 4 C126 8 126 15 120 21 Z"
+            fill="#7ab648" transform="rotate(-31 120 21)"/>
+      <path d="M120 21 C114 15 114 8 120 4 C126 8 126 15 120 21 Z"
+            fill="#e0699c"/>
+      <path d="M120 21 C114 15 114 8 120 4 C126 8 126 15 120 21 Z"
+            fill="#7ab648" transform="rotate(31 120 21)"/>
+      <path d="M120 21 C114 15 114 8 120 4 C126 8 126 15 120 21 Z"
+            fill="#8f63d6" transform="rotate(62 120 21)"/>
+    </g>
+  </svg>
+  <div id="hud-line">
+    <div id="remain" class="hidden"></div>
+    <div id="frame-name"><span class="jp"></span><span class="en"></span></div>
+  </div>
+</div>
+
 <div id="unlock"></div>
 
 <div id="shelf" hidden>
@@ -504,7 +573,6 @@
     <button id="viewer-drop" class="btn">この窓を捨てる</button>
   </div>
 </div>
-<div id="remain" class="hidden"></div>
 <button id="to-title" aria-label="タイトルへもどる" hidden>&#8592;</button>
 
 <div id="bar">
@@ -512,8 +580,6 @@
 </div>
 
 <div id="start">
-  <img id="start-room" src="./room.jpg" alt="" decoding="async" fetchpriority="high">
-  <div id="start-veil"></div>
   <div id="start-fore">
    <div id="start-left">
     <div id="start-plate">
@@ -707,7 +773,7 @@ let panelRatio = 0.62;                /* 現在の外形の幅/高さ */
 
 /* 窓のまわりに空けておく場所。難易度はタイトル画面で選ぶので、
    遊ぶ画面に残るのは枠の名前(上)と色の帯(下)だけ */
-const TITLE_SPACE = 44;   /* 枠の名前のぶん */
+const TITLE_SPACE = 64;   /* 見出し (金の罫 + 銘 / のこり枚数) のぶん */
 const EDGE = 4;           /* 画面のふちの余白 */
 
 /* 操作帯の大きさ。タイトル画面では隠れていて測れないが、隠れているあいだも
@@ -884,14 +950,19 @@ const frameNameEl = document.getElementById("frame-name");
 const frameNameJpEl = frameNameEl.querySelector(".jp");
 const frameNameEnEl = frameNameEl.querySelector(".en");
 const remainEl = document.getElementById("remain");
+const hudEl = document.getElementById("hud");
 let nameTimer = null;
 
 function showFrameName(jp, en) {
   frameNameJpEl.textContent = "─ " + jp + " ─";
   frameNameEnEl.textContent = en.toUpperCase();
   frameNameEl.classList.add("show");
+  hudEl.classList.add("naming");      /* 銘のあいだ、のこり枚数は引っこめる */
   clearTimeout(nameTimer);
-  nameTimer = setTimeout(() => frameNameEl.classList.remove("show"), 2400);
+  nameTimer = setTimeout(() => {
+    frameNameEl.classList.remove("show");
+    hudEl.classList.remove("naming");
+  }, 2400);
 }
 
 function updateRemain() {
@@ -1074,8 +1145,11 @@ const resumeNoteEl = document.getElementById("resume-note");
 const startMenuEl = document.getElementById("start-menu");
 let atTitle = true;
 
+const roomVeil = document.getElementById("room-veil");
+
 function showTitle() {
   atTitle = true;
+  roomVeil.classList.remove("playing");
   closeAsk();
   saveNow();
   /* 塗りかけがあれば「つづきから」を出す */
@@ -1087,15 +1161,18 @@ function showTitle() {
   startEl.classList.remove("fading");
   barEl2.hidden = true;
   toTitleEl.hidden = true;
+  hudEl.hidden = true;
   remainEl.classList.add("hidden");
 }
 
 function enterPlay() {
   atTitle = false;
+  roomVeil.classList.add("playing");
   startEl.classList.add("fading");
   setTimeout(() => { if (!atTitle) startEl.hidden = true; }, 450);
   barEl2.hidden = false;
   toTitleEl.hidden = false;
+  hudEl.hidden = false;
   resize();            /* 操作帯の高さが変わるので測り直す */
   updateRemain();
 }
@@ -1132,10 +1209,105 @@ function shapePath(c) {
 }
 
 /* ------------------------------------------------------------
+   木枠を描くための外形。弧の折れ目だけを丸める
+   ------------------------------------------------------------
+   外形は折れ線なので、半円窓や薔薇窓の弧は多角形になっている。
+   割り方 (セル) の側は、点を増やすと縁取りの帯が壊れるので触れない。
+   **描く時だけ**、ゆるく曲がっている頂点を角切りしてなめらかにする。
+   30度より大きく曲がる所は「角」なので、そのまま残す
+   ------------------------------------------------------------ */
+let frameOutline = null, frameOutlineFor = null;
+
+function smoothOutline(pts) {
+  let out = pts;
+  for (let round = 0; round < 2; round++) {
+    const next = [];
+    const n = out.length;
+    for (let i = 0; i < n; i++) {
+      const p = out[i], a = out[(i - 1 + n) % n], b = out[(i + 1) % n];
+      const v1 = [p[0] - a[0], p[1] - a[1]], v2 = [b[0] - p[0], b[1] - p[1]];
+      const l1 = Math.hypot(v1[0], v1[1]), l2 = Math.hypot(v2[0], v2[1]);
+      const cos = (l1 && l2) ? (v1[0] * v2[0] + v1[1] * v2[1]) / (l1 * l2) : 1;
+      if (cos < 0.866) { next.push(p); continue; }   /* 角は残す */
+      next.push([p[0] - v1[0] * 0.25, p[1] - v1[1] * 0.25]);
+      next.push([p[0] + v2[0] * 0.25, p[1] + v2[1] * 0.25]);
+    }
+    out = next;
+  }
+  return out;
+}
+
+function framePath(c) {
+  if (frameOutlineFor !== shapePoly) {
+    frameOutline = smoothOutline(shapePoly);
+    frameOutlineFor = shapePoly;
+  }
+  const o = frameOutline;
+  c.moveTo(ux(o[0][0]), vy(o[0][1]));
+  for (let i = 1; i < o.length; i++) c.lineTo(ux(o[i][0]), vy(o[i][1]));
+  c.closePath();
+}
+
+/* ------------------------------------------------------------
    硝子を描く。遊ぶ画面でも、飾り棚の小さな絵でも、同じ手で描く。
    x/y/w/h は描く場所。lead は鉛線の太さ (小さく描く時は細くする)。
    mid は「中の一点」の控え (無ければその場で出す)
    ------------------------------------------------------------ */
+/* ------------------------------------------------------------
+   硝子の地合い (むら)
+   ------------------------------------------------------------
+   本物の色硝子は、練りむらで濃淡が流れている。べた塗りだと
+   色紙を貼ったように見えるので、なだらかな濃淡を1枚作っておいて
+   soft-light で重ねる。作るのは一度きり
+   ------------------------------------------------------------ */
+let mottle = null;
+function mottlePattern(c) {
+  if (!mottle) {
+    const N = 160;
+    mottle = document.createElement("canvas");
+    mottle.width = mottle.height = N;
+    const m = mottle.getContext("2d");
+    m.fillStyle = "rgb(128,128,128)";        /* soft-light で素通しになる灰 */
+    m.fillRect(0, 0, N, N);
+    const wrap = [[0, 0], [N, 0], [-N, 0], [0, N], [0, -N], [N, N], [-N, -N], [N, -N], [-N, N]];
+    /* 大きな濃淡の斑。端をまたぐぶんも描いて、継ぎ目を消す */
+    const blobs = (count, lo, hi, aLo, aHi) => {
+      for (let i = 0; i < count; i++) {
+        const x = Math.random() * N, y = Math.random() * N;
+        const r = N * (lo + Math.random() * (hi - lo));
+        const v = Math.random() < 0.5 ? 255 : 0;
+        const a = aLo + Math.random() * (aHi - aLo);
+        for (const [dx, dy] of wrap) {
+          const g = m.createRadialGradient(x + dx, y + dy, 0, x + dx, y + dy, r);
+          g.addColorStop(0, `rgba(${v},${v},${v},${a})`);
+          g.addColorStop(1, `rgba(${v},${v},${v},0)`);
+          m.fillStyle = g;
+          m.fillRect(x + dx - r, y + dy - r, r * 2, r * 2);
+        }
+      }
+    };
+    blobs(40, 0.16, 0.38, 0.30, 0.66);    /* 大きな練りむら */
+    blobs(70, 0.06, 0.16, 0.22, 0.46);    /* 中くらいのゆらぎ */
+    blobs(110, 0.02, 0.06, 0.16, 0.36);   /* 細かい気泡 */
+    /* 圧延の筋。硝子は板に延ばすので、うっすら流れの向きが出る */
+    m.lineCap = "round";
+    for (let i = 0; i < 16; i++) {
+      const y = Math.random() * N, len = N * (0.3 + Math.random() * 0.7);
+      const x = Math.random() * N;
+      const v = Math.random() < 0.5 ? 255 : 0;
+      m.strokeStyle = `rgba(${v},${v},${v},${0.04 + Math.random() * 0.07})`;
+      m.lineWidth = 2 + Math.random() * 7;
+      for (const [dx, dy] of wrap) {
+        m.beginPath();
+        m.moveTo(x + dx, y + dy);
+        m.lineTo(x + len + dx, y + dy + (Math.random() - 0.5) * 6);
+        m.stroke();
+      }
+    }
+  }
+  return c.createPattern(mottle, "repeat");
+}
+
 function paintGlass(c, list, paint, box, lead, mid) {
   const px = (u) => box.x + u * box.w, py = (v) => box.y + v * box.h;
   for (let i = 0; i < list.length; i++) {
@@ -1162,6 +1334,15 @@ function paintGlass(c, list, paint, box, lead, mid) {
       c.fillStyle = g;
       c.fill();
       c.globalAlpha = 1;
+      /* 練りむら。小さく描く時 (棚の絵) は潰れるので入れない */
+      if (box.w >= 140) {
+        c.save();
+        c.globalCompositeOperation = "soft-light";
+        c.globalAlpha = 0.85;
+        c.fillStyle = mottlePattern(c);
+        c.fill();
+        c.restore();
+      }
       c.strokeStyle = theme.lead;
       c.lineWidth = lead;
       c.stroke();
@@ -1492,12 +1673,8 @@ function updateGlints(dt) {
    背景・木枠・光
    ============================================================ */
 function drawBackground() {
-  const g = ctx.createLinearGradient(0, 0, 0, H);
-  g.addColorStop(0, theme.wall[0]);
-  g.addColorStop(0.55, theme.wall[1]);
-  g.addColorStop(1, theme.wall[2]);
-  ctx.fillStyle = g;
-  ctx.fillRect(0, 0, W, H);
+  /* 地は部屋の絵 (#room)。canvas は透かして、その上に硝子だけを描く */
+  ctx.clearRect(0, 0, W, H);
 
   if (completeGlow > 0) {
     const gg = ctx.createRadialGradient(W / 2, PY + PH / 2, 0, W / 2, PY + PH / 2, Math.max(W, H));
@@ -1508,29 +1685,118 @@ function drawBackground() {
   }
 }
 
+/* ------------------------------------------------------------
+   木枠 — 面取りした縁と、金の座金
+   ------------------------------------------------------------
+   前は太い線を3本重ねただけで、板を貼った縁にしか見えなかった。
+   本物の窓枠は「外の縁 → 面取り → 溝 → 面取り → 内の縁」と
+   段になっていて、その段ごとの陰影が額縁らしさを作る。
+
+   輪を1本ずつ作るのに、外側の幅で描いてから内側の幅で抜く
+   (`destination-out`)。外から内へ順に置けば、抜いた所にはまだ何も
+   描かれていないので、下の輪を削らない。
+   canvas を1枚用意して焼いておき、毎コマは貼るだけ
+   ------------------------------------------------------------ */
+const frameCv = document.createElement("canvas");
+const frameCtx = frameCv.getContext("2d");
+let frameStamp = "";        /* 焼いた時の条件。変わった時だけ焼き直す */
+
+const GILT = "rgba(214,178,104,";     /* 金の座金と細線 */
+
+function buildFrame() {
+  const f = curFrame();
+  const b = Math.max(10, Math.min(PW, PH) * 0.058);
+  frameCv.width = Math.max(1, Math.round(W * DPR));
+  frameCv.height = Math.max(1, Math.round(H * DPR));
+  const c = frameCtx;
+  c.setTransform(DPR, 0, 0, DPR, 0, 0);
+  c.clearRect(0, 0, W, H);
+  c.lineJoin = "round";
+
+  const ring = (w, style, erase) => {
+    c.globalCompositeOperation = "source-over";
+    c.beginPath(); framePath(c);
+    c.lineWidth = w; c.strokeStyle = style; c.stroke();
+    if (erase > 0) {
+      c.globalCompositeOperation = "destination-out";
+      c.beginPath(); framePath(c);
+      c.lineWidth = erase; c.strokeStyle = "#000"; c.stroke();
+      c.globalCompositeOperation = "source-over";
+    }
+  };
+
+  /* 壁に落ちる影。これがあって初めて「掛かっている」ように見える */
+  c.save();
+  c.shadowColor = "rgba(0,0,0,0.55)";
+  c.shadowBlur = b * 1.8;
+  c.shadowOffsetY = b * 0.45;
+  c.beginPath(); framePath(c);
+  c.lineWidth = b * 2.1; c.strokeStyle = "rgba(0,0,0,0.95)"; c.stroke();
+  c.restore();
+
+  /* 地の色 */
+  const wg = c.createLinearGradient(PX, PY, PX + PW, PY + PH);
+  wg.addColorStop(0, f.wood[0]);
+  wg.addColorStop(0.5, f.wood[1]);
+  wg.addColorStop(1, f.wood[2]);
+  /* 段ごとの高さ。出っぱりは白を、へこみは黒を薄く重ねる */
+  const up = (a) => `rgba(255,232,186,${a})`;   /* 当たる光はほのかに暖かい */
+  const dn = (a) => `rgba(0,0,0,${a})`;
+
+  /*  外 ← → 内 (幅は b の倍。外側の幅で描いて、内側の幅で抜く) */
+  const band = (wOut, wIn, shade) => {
+    ring(wOut, wg, wIn);
+    if (shade) ring(wOut, shade, wIn);
+  };
+  band(b * 2.24, b * 2.06, dn(0.60));     /* 外のいちばん縁 */
+  band(b * 2.06, b * 1.34, up(0.16));     /* 面取りの外 (広い出っぱり) */
+  ring(b * 1.34, GILT + "0.65)", b * 1.18);   /* 金の象嵌 (1本だけ) */
+  band(b * 1.18, b * 0.52, dn(0.30));     /* 溝 (いちばん広い段・へこみ) */
+  band(b * 0.52, b * 0.26, up(0.22));     /* 面取りの内 */
+  band(b * 0.26, 0,         dn(0.66));    /* 硝子に接する内の縁 */
+
+  /* 左上から光。枠の上にだけ重ねる (source-atop) */
+  c.save();
+  c.globalCompositeOperation = "source-atop";
+  const lit = c.createLinearGradient(PX, PY, PX + PW, PY + PH);
+  lit.addColorStop(0, "rgba(255,236,200,0.20)");
+  lit.addColorStop(0.45, "rgba(255,238,206,0.02)");
+  lit.addColorStop(1, "rgba(0,0,0,0.22)");
+  c.fillStyle = lit;
+  c.fillRect(PX - b * 3, PY - b * 3, PW + b * 6, PH + b * 6);
+  c.restore();
+
+  /* 四方に金の座金。外形のいちばん端 (上下左右) に打つ */
+  const xs = shapePoly.map(p => ux(p[0])), ys = shapePoly.map(p => vy(p[1]));
+  const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+  const cy = (Math.min(...ys) + Math.max(...ys)) / 2;
+  const studs = [
+    [cx, Math.min(...ys)], [cx, Math.max(...ys)],
+    [Math.min(...xs), cy], [Math.max(...xs), cy],
+  ];
+  const r = b * 0.82;
+  for (const [sx, sy] of studs) {
+    c.save();
+    c.translate(sx, sy);
+    c.rotate(Math.PI / 4);
+    c.beginPath(); c.rect(-r / 2, -r / 2, r, r);
+    const sg = c.createLinearGradient(-r / 2, -r / 2, r / 2, r / 2);
+    sg.addColorStop(0, "rgb(236,208,146)");
+    sg.addColorStop(0.5, "rgb(196,158,90)");
+    sg.addColorStop(1, "rgb(132,100,52)");
+    c.fillStyle = sg; c.fill();
+    c.strokeStyle = "rgba(24,18,10,0.75)"; c.lineWidth = 1.2; c.stroke();
+    c.beginPath(); c.rect(-r / 6, -r / 6, r / 3, r / 3);
+    c.fillStyle = "rgba(20,15,9,0.45)"; c.fill();
+    c.restore();
+  }
+}
+
 function drawWoodFrame() {
-  /* 外形に沿った木枠:外形パスを太い線で縁取る */
-  const b = Math.max(9, PW * 0.05);
-  ctx.save();
-  ctx.beginPath();
-  shapePath(ctx);
-  const wood = curFrame().wood;
-  const wg = ctx.createLinearGradient(PX, PY, PX + PW, PY + PH);
-  wg.addColorStop(0, wood[0]);
-  wg.addColorStop(0.5, wood[1]);
-  wg.addColorStop(1, wood[2]);
-  ctx.strokeStyle = wg;
-  ctx.lineWidth = b * 2;
-  ctx.lineJoin = "round";
-  ctx.stroke();
-  /* 内側の細い縁と、外側のわずかなハイライト */
-  ctx.strokeStyle = theme.frameInner;
-  ctx.lineWidth = 2.5;
-  ctx.stroke();
-  ctx.strokeStyle = curFrame().edge;
-  ctx.lineWidth = b * 2 + 2;
-  ctx.stroke();
-  ctx.restore();
+  const stamp = `${frameKey}|${Math.round(PX)}|${Math.round(PY)}|` +
+                `${Math.round(PW)}|${Math.round(PH)}|${curShape}|${W}x${H}|${DPR}`;
+  if (stamp !== frameStamp) { buildFrame(); frameStamp = stamp; }
+  ctx.drawImage(frameCv, 0, 0, W, H);
 }
 
 function drawCompleteRays(time) {
@@ -1570,6 +1836,14 @@ function frame(now) {
   const dt = Math.min((now - lastT) / 1000, 0.05);
   lastT = now;
   const time = now / 1000;
+
+  /* タイトルのあいだは何も描かない。canvas は地の絵を透かすので、
+     描いたままだと窓と木枠がタイトルの裏に透けて出る */
+  if (atTitle) {
+    ctx.clearRect(0, 0, W, H);
+    requestAnimationFrame(frame);
+    return;
+  }
 
   updateGlints(dt);
   if (completed && completeGlow < 1) completeGlow = Math.min(completeGlow + dt * 0.4, 1);
@@ -1971,6 +2245,7 @@ window.__app = {
     refreshHosts(); completed = false; completeGlow = 0; glints.length = 0;
     updateRemain(); redrawGlass();
   },
+  redraw: () => redrawGlass(),
   tapCell,
   paintAlong,
   saveKey: SAVE_KEY,
