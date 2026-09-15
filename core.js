@@ -411,7 +411,47 @@
   const TAP_MIN_PX = 18;
 
   /* @returns {number[]} 各セルの持ち主。自分が押せるなら自分の番号 */
-  function attachSlivers(cells, panelW, panelH, minPx = TAP_MIN_PX) {
+  /* ------------------------------------------------------------
+     木枠が硝子の側へ食い込む深さ (px)
+     ------------------------------------------------------------
+     描くほう (index.html の buildFrame) と、隠れるセルを見つけるほうで
+     食い違うと、また「見つからない1枚」が出る。式はここ一本にする
+     ------------------------------------------------------------ */
+  const FRAME_B = 0.046, FRAME_SPAN = 2.24;
+  function frameCover(panelW, panelH) {
+    return Math.max(9, Math.min(panelW, panelH) * FRAME_B) * FRAME_SPAN / 2;
+  }
+
+  /* 点から外形の辺までの距離 (px)。外形の内側にどれだけ入っているか */
+  function depthInside(x, y, outline, panelW, panelH) {
+    let best = Infinity;
+    for (let i = 0; i < outline.length; i++) {
+      const a = outline[i], b = outline[(i + 1) % outline.length];
+      const ax = a[0] * panelW, ay = a[1] * panelH;
+      const bx = b[0] * panelW, by = b[1] * panelH;
+      const dx = bx - ax, dy = by - ay;
+      const L = dx * dx + dy * dy;
+      let t = L ? ((x - ax) * dx + (y - ay) * dy) / L : 0;
+      t = t < 0 ? 0 : t > 1 ? 1 : t;
+      const d = Math.hypot(x - (ax + t * dx), y - (ay + t * dy));
+      if (d < best) best = d;
+    }
+    return best;
+  }
+
+  /* そのセルが、木枠の下から少しでも顔を出しているか。
+     出していなければ「あるのに見えない」ので、押す枚数に数えてはいけない */
+  function showsPastFrame(cell, outline, panelW, panelH, cover) {
+    const pts = cell.concat([insidePoint(cell)]);
+    for (const p of pts) {
+      if (depthInside(p[0] * panelW, p[1] * panelH, outline, panelW, panelH) >= cover + 3) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  function attachSlivers(cells, panelW, panelH, minPx = TAP_MIN_PX, outline = null) {
     const center = cells.map((poly) => {
       let cx = 0, cy = 0;
       for (const p of poly) { cx += p[0]; cy += p[1]; }
@@ -430,6 +470,10 @@
       const mid = insidePoint(cells[i]);
       if (distToEdges(mid[0] * panelW, mid[1] * panelH,
                       cells[i].map(p => [p[0] * panelW, p[1] * panelH])) < minPx / 4) continue;
+      /* 木枠にすっかり隠れるセルも、押す枚数には数えない。
+         「のこり2枚」なのに画面のどこにも見当たらない、が起きる */
+      if (outline && !showsPastFrame(cells[i], outline, panelW, panelH,
+                                     frameCover(panelW, panelH))) continue;
       host[i] = i; tappable.push(i);
     }
     /* 押せるセルが 1 枚も無い(ありえないほど小さい画面)なら、そのまま返す */
@@ -449,8 +493,8 @@
   }
 
   /* 実際に指で押す枚数。預けたかけらは持ち主と一緒に嵌まるので数えない */
-  function tappableCount(cells, panelW, panelH) {
-    const host = attachSlivers(cells, panelW, panelH);
+  function tappableCount(cells, panelW, panelH, outline = null) {
+    const host = attachSlivers(cells, panelW, panelH, TAP_MIN_PX, outline);
     let n = 0;
     for (let i = 0; i < cells.length; i++) if (host[i] === i) n++;
     return n;
@@ -1000,7 +1044,7 @@
       const made = build();
       /* 外形によって窓の大きさが変わるので、その窓自身の大きさで数える */
       const w = made.panelW || panelW, h = made.panelH || panelH;
-      const taps = tappableCount(made.cells, w, h);
+      const taps = tappableCount(made.cells, w, h, made.poly || null);
       if (inTargetBand(taps, diffKey)) return made;
       const gap = Math.abs(taps - target);
       if (gap < bestGap) { bestGap = gap; best = made; }
@@ -1607,7 +1651,7 @@
     insetConvex, ringCells, borderPlan, makeWindow, BORDER_MIN_TARGET,
     conformCells, curveLeading, bowPoints, segmentsCross, bowFits,
     CURVE_STYLES, pickCurveStyle, mirrorSymmetric,
-    TAP_MIN_PX, attachSlivers,
+    TAP_MIN_PX, attachSlivers, frameCover, showsPastFrame,
     SAVE_VERSION, packWindow, unpackWindow,
     SHELF_MAX, packShelf, unpackShelf, addToShelf,
   };

@@ -1096,3 +1096,58 @@ test('木枠はどれも、3段の木目と縁の色を持つ', () => {
     assert.ok(Number.isInteger(f.at) && f.at >= 0, `${f.name}: 仕入れる窓数が変`);
   }
 });
+
+/* 「のこり2枚」なのに、画面のどこにも見当たらない —— 実機で出た。
+   木枠は硝子の側へ食い込むので、縁ぎわのセルは丸ごと隠れることがある。
+   押せる大きさでも、見えなければ見つけられない。
+   直す前は 300窓中 49窓で起きていた (のべ 84枚) */
+test('押すセルは、どれも木枠の下から顔を出している', () => {
+  const PW = 325, PH = 524;              /* iPhone 16 Plus の窓 */
+  let windows = 0, hidden = 0, worst = null;
+  for (const diff of C.DIFF_ORDER) {
+    for (const shape of C.WINDOW_SHAPES) {
+      for (let n = 0; n < 6; n++) {
+        const w = Math.min(PW, PH * shape.ratio), h = w / shape.ratio;
+        const poly = shape.poly();
+        const made = C.buildInBand(diff, w, h, () => ({
+          cells: C.makeWindow({
+            diff, shapePoly: poly, symmetric: n % 2 === 0,
+            panelW: w, panelH: h, border: n % 3 !== 0, curve: true,
+          }), panelW: w, panelH: h, poly,
+        }));
+        const host = C.attachSlivers(made.cells, w, h, C.TAP_MIN_PX, poly);
+        windows++;
+        for (let i = 0; i < made.cells.length; i++) {
+          if (host[i] !== i) continue;
+          if (!C.showsPastFrame(made.cells[i], poly, w, h, C.frameCover(w, h))) {
+            hidden++;
+            if (!worst) worst = `${diff} ${shape.key}`;
+          }
+        }
+      }
+    }
+  }
+  assert.strictEqual(hidden, 0,
+    `${windows} 窓中、木枠に隠れて見つけられない押すセルが ${hidden} 枚 (${worst})`);
+});
+
+/* 手作り枠 (外形は縦長の四角) でも同じこと */
+test('手作り枠でも、押すセルは木枠の下から顔を出している', () => {
+  const PW = 325, PH = 524;
+  let hidden = 0, worst = null;
+  for (const diff of C.DIFF_ORDER) {
+    for (const name of C.HANDMADE_BY_DIFF[diff]) {
+      const hm = C.HANDMADE.find(f => f.name === name);
+      const cells = hm.build(C.DIFF_TARGET[diff]);
+      const host = C.attachSlivers(cells, PW, PH, C.TAP_MIN_PX, C.UNIT_RECT);
+      for (let i = 0; i < cells.length; i++) {
+        if (host[i] !== i) continue;
+        if (!C.showsPastFrame(cells[i], C.UNIT_RECT, PW, PH, C.frameCover(PW, PH))) {
+          hidden++;
+          if (!worst) worst = `${diff} ${name}`;
+        }
+      }
+    }
+  }
+  assert.strictEqual(hidden, 0, `木枠に隠れて見つけられないセルが ${hidden} 枚 (${worst})`);
+});

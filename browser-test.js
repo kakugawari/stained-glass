@@ -399,6 +399,29 @@ async function run() {
       return t[3];
     });
     ok(bake < 90, `木枠を焼き直すのが速い (${bake.toFixed(1)}ms)`);
+
+    /* 実機で「のこり2枚」が見つからなかった。木枠は硝子の側へ食い込むので、
+       縁ぎわのセルが丸ごと隠れる。押せる大きさでも、見えなければ探せない。
+       いまは隠れるセルを押す枚数から外しているが、その判定に使う深さ
+       (frameCover) と、実際に描いた木枠がずれたら、また同じことが起きる */
+    const covers = [];
+    for (const shape of ['rect', 'square', 'round', 'gothic', 'circle']) {
+      const m = await phone.evaluate((sh) => {
+        const C = window.Core;
+        const s = C.WINDOW_SHAPES.find((x) => x.key === sh);
+        const cells = C.makeWindow({ diff: 'normal', shapePoly: s.poly(), symmetric: true,
+          panelW: 320, panelH: 320 / s.ratio, border: true, curve: true });
+        window.__app.setWindow(cells, s, 'normal');
+        return window.__app.frameDeepest();
+      }, shape);
+      covers.push({ shape, ...m });
+    }
+    const off = covers.filter((m) => m.deepest > m.cover + 3);
+    ok(off.length === 0,
+      `描いた木枠の覆う深さが、隠れる判定と合っている (` +
+      covers.map((m) => `${m.shape} 机上 ${m.cover.toFixed(1)}→実際 ${m.deepest.toFixed(1)}`)
+        .join(' / ') + `)`);
+    await start(phone, 'normal');
     await start(phone, 'normal');
 
     // ------------------------------------------------ 硝子を嵌める
@@ -1009,6 +1032,15 @@ async function run() {
     ok(sameShape && worstGap < 1e-4,
       `窓の割り方もそのまま戻る (ずれ ${(worstGap * 100).toFixed(4)}% 以内)`);
     ok(back.remain === kept.remain, `のこり枚数もそのまま (${back.remain})`);
+    /* 「のこり 0 枚」なのに仕上げになっていない窓があると、鐘が鳴らず
+       終われない。木枠に隠れるセルを預けるようにしたので、前に保存した窓が
+       開き直した拍子に埋まりきることがある */
+    const stuck = await phone.evaluate(() => {
+      const s = window.__app.state();
+      return { remain: s.remain, completed: s.completed };
+    });
+    ok(!(stuck.remain === 0 && !stuck.completed),
+      `のこり 0 枚なのに終われない窓にならない (のこり ${stuck.remain} 枚)`);
     /* 嵌めた硝子が、開き直した拍子に隣へ写って増えていないか。
        帯を並べる前に窓を戻していた頃は、板が本当より高く出て、
        かけらの預け先が変わり、5枚が21枚に広がることがあった */

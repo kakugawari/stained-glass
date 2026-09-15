@@ -643,6 +643,7 @@
    ここでは名前を借りて、描画・音・操作に専念する */
 const {
   COLOR_FAMILIES, clipConvex, UNIT_RECT, pointInPoly, insidePoint, attachSlivers,
+  TAP_MIN_PX, frameCover,
   WINDOW_SHAPES, HANDMADE, HANDMADE_BY_DIFF, makeWindow, DIFF_TARGET, relLuminance,
   pickCurveStyle, buildInBand,
   FRAMES, unlockedColors, unlockedFrames, nextUnlock, newlyUnlocked,
@@ -834,6 +835,8 @@ function resize() {
   layoutPanel();
   if (startMenuEl) paintRosettes();
   refreshHosts();
+  updateRemain();
+  settleComplete();    /* 向きを変えて預け先が変わり、埋まりきることがある */
   redrawGlass();
 }
 window.addEventListener("resize", resize);
@@ -937,7 +940,7 @@ let shapePoly = WINDOW_SHAPES[0].poly.call(WINDOW_SHAPES[0]);   /* 現在の外�
    ※ 一度嵌めた硝子は消さない */
 function refreshHosts() {
   mids = cells.map(insidePoint);
-  hosts = attachSlivers(cells, PW, PH);
+  hosts = attachSlivers(cells, PW, PH, TAP_MIN_PX, shapePoly);
   for (let i = 0; i < cells.length; i++) {
     const h = hosts[i];
     if (h !== i && fills[h] === null && fills[i] !== null) fills[h] = fills[i];
@@ -1177,6 +1180,7 @@ function enterPlay() {
   hudEl.hidden = false;
   resize();            /* 操作帯の高さが変わるので測り直す */
   updateRemain();
+  settleComplete();    /* 開き直しで のこり 0 枚になった窓を、ちゃんと仕上げる */
 }
 
 function startNew(diffKey) {
@@ -1547,6 +1551,19 @@ function fillGroup(h, defer) {
   }
 }
 
+/* 嵌め終わっているのに、まだ仕上げになっていない窓を仕上げる。
+   木枠に隠れるセルを持ち主に預けるようにしたので、**前に保存した窓**を
+   開き直した拍子に、のこり 0 枚になることがある。放っておくと鐘が鳴らず、
+   終われない窓が手もとに残ってしまう */
+function settleComplete() {
+  if (completed || atTitle || cells.length === 0) return;
+  if (!fills.every(f => f !== null)) return;
+  completed = true;
+  pealBells();
+  countCleared();
+  saveNow();
+}
+
 /* 窓を1つ仕上げた。棚に飾り、何か増えたら知らせる */
 function countCleared() {
   const before = cleared;
@@ -1752,7 +1769,7 @@ let frameBox = { x: 0, y: 0, w: 1, h: 1 };
 
 function buildFrame() {
   const f = curFrame();
-  const b = Math.max(9, Math.min(PW, PH) * 0.046);
+  const b = frameCover(PW, PH) * 2 / 2.24;    /* 覆う深さ = b * 2.24 / 2 */
   /* 画面ぜんぶではなく、枠の入る所だけを焼く。
      全面 (1290x2217) だと、毎コマ 2.9M 画素を貼ることになる */
   const pad = b * 4;
@@ -2414,6 +2431,39 @@ window.__app = {
   },
   redraw: () => redrawGlass(),
   rebuildFrame: () => { frameStamp = ""; drawWoodFrame(); },
+  /* 木枠が実際に覆っている、いちばん深い所 (外形からの距離 px)。
+     線の太さから机上で出した値と合っているかを確かめる */
+  frameDeepest: () => {
+    drawWoodFrame();
+    const img = frameCtx.getImageData(0, 0, frameCv.width, frameCv.height);
+    const seg = [];
+    for (let i = 0; i < shapePoly.length; i++) {
+      const a = shapePoly[i], b2 = shapePoly[(i + 1) % shapePoly.length];
+      seg.push([ux(a[0]), vy(a[1]), ux(b2[0]), vy(b2[1])]);
+    }
+    const depth = (x, y) => {
+      let best = Infinity;
+      for (const [ax, ay, bx, by] of seg) {
+        const dx = bx - ax, dy = by - ay, L = dx * dx + dy * dy;
+        let t = L ? ((x - ax) * dx + (y - ay) * dy) / L : 0;
+        t = t < 0 ? 0 : t > 1 ? 1 : t;
+        const d = Math.hypot(x - (ax + t * dx), y - (ay + t * dy));
+        if (d < best) best = d;
+      }
+      return best;
+    };
+    let deepest = 0;
+    for (let py = 0; py < frameCv.height; py += 2) {
+      for (let px = 0; px < frameCv.width; px += 2) {
+        if (img.data[(py * frameCv.width + px) * 4 + 3] <= 80) continue;
+        const x = px / DPR + frameBox.x, y = py / DPR + frameBox.y;
+        if (!pointInPoly((x - PX) / PW, (y - PY) / PH, shapePoly)) continue;
+        const d = depth(x, y);
+        if (d > deepest) deepest = d;
+      }
+    }
+    return { deepest, cover: frameCover(PW, PH) };
+  },
   tapCell,
   paintAlong,
   saveKey: SAVE_KEY,
